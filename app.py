@@ -7,17 +7,16 @@ import io
 
 # Konfiguracija stranice
 st.set_page_config(
-    page_title="Revizija Logističkog Računa - G. Englmayer (PDF + Cjenik)",
-    page_icon="📄",
+    page_title="Detaljna Revizija Računa - G. Englmayer & Ugovor",
+    page_icon="📦",
     layout="wide"
 )
 
-# Naslov aplikacije
-st.title("📄 Sustav za Reviziju Računa prema PDF Specifikaciji i Ugovoru")
-st.markdown("Direktna usporedba službenih stavki iz PDF računa G. Englmayer s ugovornim cjenikom Makromikro grupe (br. OF 002/2026).")
+st.title("📦 Sustav za Detaljnu Reviziju Logističkih Računa (PDF + Ugovorni Cjenik)")
+st.markdown("Automatska usporedba stavki iz PDF specifikacije računa, ugovorenih zona, rokova isporuke i težinskih razreda paleta prema ugovoru br. OF 002/2026.")
 
-# Sidebar za parametre obračuna i datoteke
-st.sidebar.header("Parametri obračuna i cjenika")
+# Sidebar - Parametri obračuna
+st.sidebar.header("1. Ugovorni parametri")
 cijena_goriva = st.sidebar.number_input("Prosječna cijena dizel goriva (€ bez PDV-a):", value=1.87, step=0.01)
 
 def izracunaj_dodatak_gorivo(cijena):
@@ -32,9 +31,9 @@ def izracunaj_dodatak_gorivo(cijena):
 dodatak_gorivo_pct = izracunaj_dodatak_gorivo(cijena_goriva)
 st.sidebar.info(f"Izračunati dodatak za gorivo (baza 1.46 €): **{dodatak_gorivo_pct}%**")
 
-st.sidebar.header("Učitavanje dokumenata")
+st.sidebar.header("2. Učitavanje dokumenata")
 uploaded_pdf = st.sidebar.file_uploader("Učitaj PDF specifikaciju računa", type=["pdf"])
-uploaded_excel = st.sidebar.file_uploader("Učitaj Excel/CSV bazu pošiljaka (za gradove i težine)", type=["xlsx", "xls", "csv"])
+uploaded_excel = st.sidebar.file_uploader("Učitaj Excel/CSV bazu (za gradove, ZIP i težine)", type=["xlsx", "xls", "csv"])
 
 if uploaded_pdf is not None:
     try:
@@ -46,25 +45,30 @@ if uploaded_pdf is not None:
             if t:
                 pdf_tekst += t + "\n"
         
-        # Ekstrakcija redaka iz PDF-a (LA-NR, Datum, Referenca, Iznos)
+        # Ekstrakcija stavki iz PDF-a (LA-NR, Datum, Referenca, Iznos)
         pdf_entries = []
         for line in pdf_tekst.split('\n'):
-            match = re.search(r'(EP-\d+)\s+(\d{2}\.\d{2}\.\d{4}\.)\s+(\d+)\s+(\d+%\s+)?([\d\.,]+)', line)
+            match = re.search(r'(EP-\d+)\s+(\d{2}\.\d{2}\.\d{4}\.)\s+(\d+)?\s*(\d+%\s+)?([\d\.,]+)', line)
             if match:
                 shpt_id = match.group(1)
                 date_str = match.group(2)
-                ref = match.group(3)
+                ref = match.group(3) if match.group(3) else "N/A"
                 amount_str = match.group(5).replace('.', '').replace(',', '.')
                 try:
                     amount = float(amount_str)
-                    pdf_entries.append({'Route ID': shpt_id, 'PDF_Datum': date_str, 'PDF_Referenca': ref, 'PDF_Naplaćeni_Iznos': amount})
+                    pdf_entries.append({
+                        'Route ID': shpt_id, 
+                        'PDF_Datum_Isporuke': date_str, 
+                        'PDF_Referenca': ref, 
+                        'PDF_Naplaćeni_Iznos': amount
+                    })
                 except:
                     pass
         
         df_pdf = pd.DataFrame(pdf_entries)
-        st.success(f"📄 PDF specifikacija uspješno učitana! Pronađeno stavki na računu: {len(df_pdf)}")
+        st.success(f"📄 PDF specifikacija uspješno učitana! Pronađeno stavki: {len(df_pdf)}")
         
-        # Spajanje s Excel bazom ako je učitana
+        # Spajanje s Excel bazom pošiljaka (za detalje poput primatelja, grada, ZIP-a, težine, CLL, tipa palete)
         if uploaded_excel is not None:
             if uploaded_excel.name.endswith('.csv'):
                 df_excel = pd.read_csv(uploaded_excel)
@@ -74,19 +78,21 @@ if uploaded_pdf is not None:
             if 'Shpt.id' in df_excel.columns:
                 df_excel = df_excel.dropna(subset=['Shpt.id']).copy()
             
-            # Spajamo podatke preko Route ID / Shpt.id
+            # Spajamo preko Route ID / Shpt.id
             if 'Route ID' in df_excel.columns and 'Route ID' in df_pdf.columns:
                 df = pd.merge(df_pdf, df_excel, on='Route ID', how='left')
             else:
                 df = df_pdf
-                st.warning("Nije pronađen poklapajući 'Route ID' stupac za spajanje s Excelom, prikazuju se čisti podaci iz PDF-a.")
+                st.warning("Nije pronađen poklapajući stupac 'Route ID', prikazuju se osnovni podaci iz PDF-a.")
         else:
             df = df_pdf
-            st.info("💡 Savjet: Učitajte i Excel tabliku u sidebaru kako biste dobili potpune podatke o gradovima, ZIP kodovima i težinama.")
+            st.info("💡 Savjet: Učitajte i Excel/CSV tablicu u sidebaru kako bi sustav povukao primatelje, gradove, ZIP kodove, težine i broj paleta (CLL).")
 
-        if st.button("Pokreni reviziju na temelju PDF-a i ugovora"):
+        if st.button("Pokreni detaljnu reviziju (PDF + Ugovor)"):
             
             # --- UGOVORNA LOGIKA I PRAVILA ---
+            
+            # 1. Zona prema ZIP-u i gradu
             def odredi_zonu(row):
                 city = str(row.get('city CN', '')).strip().lower()
                 zip_val = row.get('ZIP CN', 0)
@@ -113,6 +119,10 @@ if uploaded_pdf is not None:
 
             df['Izracunata_Zona'] = df.apply(odredi_zonu, axis=1)
             
+            # 2. Rok isporuke (radni dani) i dopušteni ugovorni rok
+            df['Dopušteni_Rok_Dana'] = df['Izracunata_Zona'].apply(lambda z: 1 if z == "Zona 1" else (2 if z in ["Zona 2", "Zona 4", "Zona 5"] else 3))
+            
+            # 3. Težina po paleti (Weight / CLL)
             def izracunaj_tezinu_po_paleti(row):
                 cll = row.get('CLL', 1)
                 weight = row.get('Weight', 0)
@@ -122,6 +132,7 @@ if uploaded_pdf is not None:
 
             df['Tezina_Po_Paleti'] = df.apply(izracunaj_tezinu_po_paleti, axis=1)
 
+            # 4. Ugovorena cijena palete prema cjeniku
             def ugovorena_cijena_palete(row):
                 zona = row['Izracunata_Zona']
                 tezina = row['Tezina_Po_Paleti']
@@ -158,72 +169,64 @@ if uploaded_pdf is not None:
             
             faktor_goriva = 1.0 + (dodatak_gorivo_pct / 100.0)
             df['Ugovoreno_Ukupno'] = df['Ugovorena_Osnovna_Cijena'] * faktor_goriva
-            
-            neto_kol = 'PDF_Naplaćeni_Iznos'
+            df['Razlika_Cijene'] = df['PDF_Naplaćeni_Iznos'] - df['Ugovoreno_Ukupno']
             
             total_shipments = len(df)
             
-            st.info(f"📊 Analizirano pošiljaka iz PDF-a: **{total_shipments}**")
-            
             # Tabovi izvještaja
             tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                "1. PDF vs Ugovor", 
-                "2. Usporedba cijena", 
-                "3. Preplate", 
-                "4. Zbirni pregled", 
-                "5. Sirovi PDF tekst"
+                "1. PDF i Ugovorne Cijene", 
+                "2. Usporedba po Primateljima", 
+                "3. Rokovi Isporuke i Zone", 
+                "4. Preplate i Višak", 
+                "5. Sirovi PDF Tekst"
             ])
             
             def konvertiraj_u_csv(data_frame):
                 return data_frame.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
 
-            # 1. PDF vs Ugovor
+            # 1. PDF i Ugovorne Cijene
             with tab1:
-                st.subheader("Usporedba službenih podataka iz PDF specifikacije i ugovornih zona")
-                st.dataframe(df[['Route ID', 'PDF_Datum', 'PDF_Referenca', 'PDF_Naplaćeni_Iznos', 'city CN', 'Izracunata_Zona', 'CLL', 'Weight']].head(20))
-                st.download_button("📥 Preuzmi PDF analizu (CSV)", konvertiraj_u_csv(df), "pdf_vs_ugovor.csv", "text/csv")
+                cols_prikaz = [c for c in ['Route ID', 'PDF_Referenca', 'PDF_Datum_Isporuke', 'consignee', 'city CN', 'Izracunata_Zona', 'Weight', 'CLL', 'PDF_Naplaćeni_Iznos', 'Ugovoreno_Ukupno', 'Razlika_Cijene'] if c in df.columns]
+                st.subheader("Usporedba naplaćenog iznosa s PDF računa i ugovornog izračuna")
+                st.dataframe(df[cols_prikaz].head(25))
+                st.download_button("📥 Preuzmi tablicu (CSV)", konvertiraj_u_csv(df[cols_prikaz]), "pdf_vs_ugovor_detaljno.csv", "text/csv")
             
-            # 2. Usporedba cijena
+            # 2. Usporedba po primateljima
             with tab2:
-                st.subheader("Detaljna usporedba iznosa s PDF računa i ugovorenog iznosa")
-                prikaz_df = df[['Route ID', 'PDF_Datum', 'city CN', 'Izracunata_Zona', 'Weight', 'CLL', 'PDF_Naplaćeni_Iznos', 'Ugovoreno_Ukupno']].copy()
-                prikaz_df['Razlika (PDF - Ugovor)'] = prikaz_df['PDF_Naplaćeni_Iznos'] - prikaz_df['Ugovoreno_Ukupno']
-                st.dataframe(prikaz_df.head(25))
-                st.download_button("📥 Preuzmi 'Usporedba cijena' (CSV)", konvertiraj_u_csv(prikaz_df), "usporedba_cijena_pdf.csv", "text/csv")
-                
-            # 3. Preplate
+                st.subheader("Financijska analiza agregirana po primateljima")
+                if 'consignee' in df.columns:
+                    agregirano = df.groupby('consignee').agg({
+                        'Route ID': 'count',
+                        'PDF_Naplaćeni_Iznos': 'sum',
+                        'Ugovoreno_Ukupno': 'sum',
+                        'Razlika_Cijene': 'sum'
+                    }).reset_index().rename(columns={'Route ID': 'Broj pošiljaka'})
+                    st.dataframe(agregirano)
+                    st.download_button("📥 Preuzmi izvještaj po primateljima (CSV)", konvertiraj_u_csv(agregirano), "primatelji_analiza.csv", "text/csv")
+                else:
+                    st.info("Za grupiranje po primateljima potrebno je učitati i Excel/CSV datoteku.")
+
+            # 3. Rokovi isporuke i zone
             with tab3:
-                st.subheader("Izdvojene preplate (gdje je PDF iznos veći od ugovorenog)")
-                preplate_df = prikaz_df[prikaz_df['Razlika (PDF - Ugovor)'] > 0].sort_values(by='Razlika (PDF - Ugovor)', ascending=False)
-                st.dataframe(preplate_df.head(15))
-                st.download_button("📥 Preuzmi 'Preplate' (CSV)", konvertiraj_u_csv(preplate_df), "preplate_pdf.csv", "text/csv")
-                
-            # 4. Zbirni pregled
+                st.subheader("Provjera ugovorenih rokova isporuke po zonama")
+                cols_rokovi = [c for c in ['Route ID', 'PDF_Datum_Isporuke', 'consignee', 'city CN', 'Izracunata_Zona', 'Dopušteni_Rok_Dana'] if c in df.columns]
+                st.dataframe(df[cols_rokovi].head(25))
+                st.download_button("📥 Preuzmi izvještaj o rokovima (CSV)", konvertiraj_u_csv(df[cols_rokovi]), "rokovi_i_zone.csv", "text/csv")
+
+            # 4. Preplate i višak
             with tab4:
-                st.subheader("Zbirni financijski pregled na temelju PDF računa")
-                ukupno_pdf = df['PDF_Naplaćeni_Iznos'].sum()
-                ugovoreno_iznos = df['Ugovoreno_Ukupno'].sum()
-                preplata = ukupno_pdf - ugovoreno_iznos
-                
-                col_s1, col_s2, col_s3 = st.columns(3)
-                col_s1.metric("Naplaćeno po PDF Računu", f"{ukupno_pdf:,.2f} €")
-                col_s2.metric("Trebalo po Ugovoru", f"{ugovoreno_iznos:,.2f} €")
-                col_s3.metric("Ukupna preplata / Višak", f"{preplata:,.2f} €")
-                
-                zbirna_tablica = pd.DataFrame({
-                    "Kategorija": ["Osnovni prijevoz", f"Gorivo ({dodatak_gorivo_pct}%)", "SVEUKUPNO"],
-                    "PDF Račun (€)": [ukupno_pdf * 0.88, ukupno_pdf * 0.12, ukupno_pdf],
-                    "Ugovor (€)": [ugovoreno_iznos * 0.88, ugovoreno_iznos * 0.12, ugovoreno_iznos]
-                })
-                st.table(zbirna_tablica)
-                st.download_button("📥 Preuzmi 'Zbirni pregled' (CSV)", konvertiraj_u_csv(zbirna_tablica), "zbirni_pregled_pdf.csv", "text/csv")
-                
+                st.subheader("Izdvojene preplate (gdje je PDF iznos veći od ugovorenog)")
+                preplate_df = df[df['Razlika_Cijene'] > 0].sort_values(by='Razlika_Cijene', ascending=False)
+                st.dataframe(preplate_df[cols_prikaz].head(20))
+                st.download_button("📥 Preuzmi preplate (CSV)", konvertiraj_u_csv(preplate_df[cols_prikaz]), "preplate_detaljno.csv", "text/csv")
+
             # 5. Sirovi PDF tekst
             with tab5:
-                st.subheader("Ekstrahirani tekst iz PDF računa")
+                st.subheader("Izvorni tekst iz PDF specifikacije")
                 st.text_area("Sadržaj PDF-a", pdf_tekst, height=400)
 
     except Exception as e:
-        st.error(f"Greška kod obrade PDF-a: {e}")
+        st.error(f"Došlo je do pogreške prilikom obrade PDF-a: {e}")
 else:
     st.info("Molimo učitajte PDF specifikaciju računa u bočnoj traci kako biste pokrenuli reviziju.")
