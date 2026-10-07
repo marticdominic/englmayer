@@ -142,7 +142,7 @@ if uploaded_file is not None:
                 sve_sa_pdv = ukupno_naplaceno * 1.25
                 
                 v1, v2, v3, v4 = st.columns(4)
-                v1.metric("Ukupno bez PDV-a", f"{sve_bez_vjv:,.2f} EUR" if 'sve_bez_vjv' in locals() else f"{sve_bez_pdv:,.2f} EUR")
+                v1.metric("Ukupno bez PDV-a", f"{sve_bez_pdv:,.2f} EUR")
                 v2.metric("Ukupno PDV (25%)", f"{sve_pdv:,.2f} EUR")
                 v3.metric("Ukupno s PDV-om", f"{sve_sa_pdv:,.2f} EUR")
                 v4.metric("Ukupno stavki", f"{total_shipments}")
@@ -155,4 +155,21 @@ if uploaded_file is not None:
                     usluge = ['Gorivo', 'OWP / Izvangabaritno', 'Osnovni Prijevoz', 'Povratnice']
                     iznosi = [sve_bez_pdv * 0.12, sve_bez_pdv * 0.05, sve_bez_pdv * 0.80, sve_bez_pdv * 0.03]
                     ax.pie(iznosi, labels=usluge, autopct='%1.1f%%', startangle=140, colors=['#1f77b4', '#ff7f0e', '#aec7e8', '#2ca02c'])
-                    st.pyplot(
+                    st.pyplot(fig)
+                    
+                with col_g2:
+                    st.markdown("### Top 10 gradova po trošku")
+                    if 'city CN' in df.columns:
+                        top_gradovi = df.groupby('city CN')[neto_kol].sum().nlargest(10)
+                        fig, ax = plt.subplots(figsize=(6, 6))
+                        top_gradovi.plot(kind='barh', ax=ax, color='#1f77b4')
+                        ax.set_xlabel("Trošak (€)")
+                        ax.set_ylabel("Grad")
+                        st.pyplot(fig)
+                    else:
+                        st.write("Podaci o gradu nisu dostupni.")
+
+    except Exception as e:
+        st.error(f"Došlo je do pogreške prilikom čitanja datoteke: {e}")
+else:
+    st.info("Molimo učitajte Excel izvještaj (`.xlsx` ili `.csv`) kako biste pokrenuli automatsku analizu.")
