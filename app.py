@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza po paletama, analitika rokova isporuke i usporedba pošiljaka prema službenom ugovoru G. Englmayer.")
+st.markdown("Direktna analiza po paletama, točno zoniranje prema ugovoru, analitika rokova i usporedba pošiljaka.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -117,35 +117,34 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju prema službenom cjeniku"):
+        if st.button("Pokreni reviziju po točnim ugovornim zonama"):
             
-            # Određivanje zone prema službenom ugovoru (Prilog 1)
+            # Točno zoniranje prema službenoj tablici iz ugovora
             def odredi_zonu(row):
                 city = str(row.get('Grad', '')).strip().lower()
-                zip_val = row.get('ZIP', 10000)
+                zip_val = str(row.get('ZIP', '10000')).zfill(5)
+                prva_dva = int(zip_val[:2])
                 
-                # Zona 5 (mjesta koja gravitiraju Makarskoj, Imotskom i Pločama idu pod Zonu 6 prema ugovoru)
-                if any(g in city for g in ['makarska', 'imotski', 'ploče', 'metković', 'dubrovnik', 'korčula', 'mokosica']):
+                # Zona 6: Makarska, Imotski, Ploče i ZIP koji počinje s 20
+                if any(g in city for g in ['makarska', 'imotski', 'ploče', 'metković', 'dubrovnik', 'korčula', 'mokosica']) or prva_dva == 20:
                     return "Zona 6"
                 
-                try:
-                    z = int(zip_val)
-                    if (10000 <= z <= 10450) or (40000 <= z <= 49000): # Zona 1 i Zona 4 primjeri raspona
-                        # Provjerimo točne raspone ZIP-ova iz ugovora (Prilog 1)
-                        pass
-                    
-                    # Pojednostavljeni provjereni rasponi prema ugovoru:
-                    if 10000 <= z <= 10450: return "Zona 1"
-                    elif (20000 <= z <= 23999) or (50000 <= z <= 53999): return "Zona 2"
-                    elif 30000 <= z <= 35000: return "Zona 3"
-                    elif 40000 <= z <= 49000: return "Zona 4"
-                    elif 51000 <= z <= 51500: return "Zona 5"
-                    else: return "Zona 2"
-                except:
+                # Pravila prema službenoj tablici:
+                if prva_dva == 10:
+                    return "Zona 1"
+                elif 40 <= prva_dva <= 49:
+                    return "Zona 2"
+                elif prva_dva in [34, 35, 51]:
+                    return "Zona 3"
+                elif (31 <= prva_dva <= 33) or prva_dva == 52:
+                    return "Zona 4"
+                elif (21 <= prva_dva <= 23) or prva_dva == 53:
+                    return "Zona 5"
+                else:
                     return "Zona 2"
 
             df_palete['Izracunata_Zona'] = df_palete.apply(odredi_zonu, axis=1)
-            df_palete['Dopušteni_Rok_Radnih_Dana'] = df_palete['Izracunata_Zona'].apply(lambda z: 1 if z == "Zona 1" else (2 if z in ["Zona 2", "Zona 4", "Zona 5"] else 3))
+            df_palete['Dopušteni_Rok_Radnih_Dana'] = df_palete['Izracunata_Zona'].apply(lambda z: 3 if z == "Zona 6" else (1 if z == "Zona 1" else 2))
             
             # Radni dani i status roka
             def izracunaj_radne_dane(row):
@@ -171,7 +170,6 @@ if uploaded_pdf is not None:
                 tezina = row['Masa_Palete_KG']
                 paleta_tip = str(row.get('Tip_Palete', 'FP'))
                 
-                # Matrica cijena [do 300, do 400, do 500, do 600, do 700]
                 cjenik = {
                     "Zona 1": [23.0, 25.0, 30.0, 33.0, 38.0],
                     "Zona 2": [26.0, 29.0, 35.0, 39.0, 43.0],
@@ -181,9 +179,6 @@ if uploaded_pdf is not None:
                     "Zona 6": [55.0, 59.0, 63.0, 65.0, 79.0]
                 }
                 
-                zone_indeks = {"Zona 1": 0, "Zona 2": 1, "Zona 3": 2, "Zona 4": 3, "Zona 5": 4, "Zona 6": 5}
-                z_idx = zone_indeks.get(zona, 1)
-                
                 if tezina <= 300: t_idx = 0
                 elif tezina <= 400: t_idx = 1
                 elif tezina <= 500: t_idx = 2
@@ -192,7 +187,6 @@ if uploaded_pdf is not None:
                 
                 baza = cjenik.get(zona, cjenik["Zona 2"])[t_idx]
                 
-                # +50% za OWP / van gabaritne palete
                 if paleta_tip.upper() == 'OWP':
                     baza = baza * 1.50
                     
