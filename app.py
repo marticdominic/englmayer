@@ -12,8 +12,8 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("📄 Sustav za Reviziju Logističkih Računa (Samo PDF + Ugovorni Cjenik)")
-st.markdown("Direktna analiza i revizija svake palete iz PDF specifikacije G. Englmayer, provjera radnih dana isporuke i usporedba s ugovorm br. OF 002/2026.")
+st.title("📄 Sustav za Reviziju Logističkih Računa (Isključivo PDF + Ugovorni Cjenik)")
+st.markdown("Direktna analiza i revizija svake palete iz PDF specifikacije G. Englmayer, provjera radnih dana isporuke i usporedba s ugovorom br. OF 002/2026.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -44,15 +44,15 @@ if uploaded_pdf is not None:
             if t:
                 pdf_tekst += t + "\n"
         
-        # Parsiranje PDF specifikacije za izvlačenje paleta, primatelja, gradova, ZIP-ova, masa i iznosa
+        # Parsiranje PDF specifikacije za izvlačenje paleta, primatelja, gradova, ZIP-ova i masa
         redci_paleta = []
         trenutni_shpt = None
         trenutni_datum_naloga = None
         trenutni_datum_isporuke = None
         trenutni_ref = None
         trenutni_primatelj = None
-        trenutni_grad = None
-        trenutni_zip = None
+        trenutni_grad = "Zagreb"
+        trenutni_zip = 10000
 
         for line in pdf_tekst.split('\n'):
             line_str = line.strip()
@@ -63,13 +63,13 @@ if uploaded_pdf is not None:
                 trenutni_datum_naloga = m_nalog.group(1)
                 trenutni_shpt = m_nalog.group(3)
                 trenutni_primatelj = "N/A"
-                trenutni_grad = "N/A"
-                trenutni_zip = 0
+                trenutni_grad = "Zagreb"
+                trenutni_zip = 10000
             
-            # Primatelj i adresa (izvlačenje ZIP-a i grada iz linije primatelja)
+            # Primatelj i adresa
             if "Primatelj" in line_str:
                 trenutni_primatelj = line_str
-                m_zip_grad = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s]+)', line_str)
+                m_zip_grad = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', line_str)
                 if m_zip_grad:
                     trenutni_zip = int(m_zip_grad.group(1))
                     trenutni_grad = m_zip_grad.group(2).strip()
@@ -84,25 +84,26 @@ if uploaded_pdf is not None:
             if m_ref:
                 trenutni_ref = m_ref.group(1)
 
-            # Linija s paletom: masa, količina, tip palete (npr. "358,00 1 EWP" ili "518,00 1 FP")
-            m_paleta = re.search(r'([\d\.,]+)\s+(\d+)\s+(EWP|FP|OWP)', line_str)
+            # Linija s paletom: masa, količina, tip palete
+            m_paleta = re.search(r'([\d\.,]+)(\d)\s+(EWP|FP|OWP)', line_str)
             if m_paleta and trenutni_shpt:
                 masa_str = m_paleta.group(1).replace('.', '').replace(',', '.')
                 kolicina = int(m_paleta.group(2))
                 tip_palete = m_paleta.group(3)
                 try:
                     masa_kg = float(masa_str)
-                    redci_paleta.append({
-                        'LA-ID': trenutni_shpt,
-                        'Referenca': trenutni_ref,
-                        'Datum_Naloga': trenutni_datum_naloga,
-                        'Datum_Isporuke': trenutni_datum_isporuke,
-                        'Primatelj': trenutni_primatelj,
-                        'Grad': trenutni_grad if trenutni_grad else "Zagreb",
-                        'ZIP': trenutni_zip if trenutni_zip else 10000,
-                        'Masa_Palete_KG': masa_kg,
-                        'Tip_Palete': tip_palete
-                    })
+                    for _ in range(kolicina):
+                        redci_paleta.append({
+                            'LA-ID': trenutni_shpt,
+                            'Referenca': trenutni_ref,
+                            'Datum_Naloga': trenutni_datum_naloga,
+                            'Datum_Isporuke': trenutni_datum_isporuke,
+                            'Primatelj': trenutni_primatelj,
+                            'Grad': trenutni_grad,
+                            'ZIP': trenutni_zip,
+                            'Masa_Palete_KG': masa_kg,
+                            'Tip_Palete': tip_palete
+                        })
                 except:
                     pass
 
@@ -111,7 +112,7 @@ if uploaded_pdf is not None:
 
         if st.button("Pokreni reviziju po paletama iz PDF-a"):
             
-            # 1. Određivanje zone prema ZIP-u i gradu iz PDF-a
+            # 1. Određivanje zone prema ZIP-u i gradu
             def odredi_zonu(row):
                 city = str(row.get('Grad', '')).strip().lower()
                 zip_val = row.get('ZIP', 10000)
@@ -155,7 +156,7 @@ if uploaded_pdf is not None:
 
             df_palete['Stvarni_Radni_Dani'] = df_palete.apply(izracunaj_radne_dane, axis=1)
 
-            # 3. Izračun ugovorene cijene za svaku paletu prema težinskom razredu iz cjenika
+            # 3. Izračun ugovorene cijene za svaku paletu prema težinskom razredu
             def ugovorena_cijena_palete(row):
                 zona = row['Izracunata_Zona']
                 tezina = row['Masa_Palete_KG']
