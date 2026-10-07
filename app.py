@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (Isključivo PDF + Ugovorni Cjenik)")
-st.markdown("Direktna analiza, razrada po paletama, provjera rokova isporuke i usporedba zbrojenih pošiljaka prema ugovoru br. OF 002/2026.")
+st.markdown("Direktna analiza, razrada po paletama, analitika rokova isporuke i usporedba pošiljaka prema ugovoru br. OF 002/2026.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -147,7 +147,7 @@ if uploaded_pdf is not None:
             df_palete['Izracunata_Zona'] = df_palete.apply(odredi_zonu, axis=1)
             df_palete['Dopušteni_Rok_Radnih_Dana'] = df_palete['Izracunata_Zona'].apply(lambda z: 1 if z == "Zona 1" else (2 if z in ["Zona 2", "Zona 4", "Zona 5"] else 3))
             
-            # Radni dani
+            # Radni dani i status roka
             def izracunaj_radne_dane(row):
                 try:
                     d_nalog = pd.to_datetime(row.get('Datum_Naloga'), format='%d.%m.%Y.', errors='coerce')
@@ -160,6 +160,10 @@ if uploaded_pdf is not None:
                     return 0
 
             df_palete['Stvarni_Radni_Dani'] = df_palete.apply(izracunaj_radne_dane, axis=1)
+            df_palete['Status_Roka'] = df_palete.apply(
+                lambda r: 'U roku' if r['Stvarni_Radni_Dani'] <= r['Dopušteni_Rok_Radnih_Dana'] else 'Izvan roka', 
+                axis=1
+            )
 
             # Cijena palete
             def ugovorena_cijena_palete(row):
@@ -186,7 +190,7 @@ if uploaded_pdf is not None:
             # Tabovi izvještaja
             tab1, tab2, tab3, tab4, tab5 = st.tabs([
                 "1. Pregled po Paletama", 
-                "2. Provjera Rokova Isporuke", 
+                "2. Provjera Rokova Isporuke (Analitika)", 
                 "3. Zbirni Financijski Pregled",
                 "4. Usporedba po Pošiljkama (Reference)",
                 "5. Preplate po Pošiljkama"
@@ -201,12 +205,30 @@ if uploaded_pdf is not None:
                 st.dataframe(df_palete)
                 st.download_button("📥 Preuzmi palete (CSV)", konvertiraj_u_csv(df_palete), "palete_iz_pdf-a.csv", "text/csv")
             
-            # 2. Rokovi isporuke
+            # 2. Provjera rokova isporuke (Analitika)
             with tab2:
-                st.subheader("Provjera ugovorenih radnih dana dostave")
-                cols_rok = ['LA-ID', 'Referenca', 'Datum_Naloga', 'Datum_Isporuke', 'Stvarni_Radni_Dani', 'Izracunata_Zona', 'Dopušteni_Rok_Radnih_Dana', 'Grad']
+                st.subheader("Analitički izvještaj: Učinkovitost i točnost rokova dostave")
+                
+                # Izračun postotaka
+                ukupno_stavki = len(df_palete)
+                broj_u_roku = len(df_palete[df_palete['Status_Roka'] == 'U roku'])
+                broj_izvan_rok = len(df_palete[df_palete['Status_Roka'] == 'Izvan roka'])
+                
+                pct_u_roku = (broj_u_roku / ukupno_stavki) * 100 if ukupno_stavki > 0 else 0
+                pct_izvan_rok = (broj_izvan_rok / ukupno_stavki) * 100 if ukupno_stavki > 0 else 0
+                
+                # KPI Kartice na vrhu
+                kpi1, kpi2, kpi3 = st.columns(3)
+                kpi1.metric("U roku (Uspješnost)", f"{pct_u_roku:.1f}%", f"{broj_u_roku} paleta")
+                kpi2.metric("Izvan roka (Kašnjenje)", f"{pct_izvan_rok:.1f}%", f"{broj_izvan_rok} paleta")
+                kpi3.metric("Ukupno analizirano", f"{ukupno_stavki} paleta")
+                
+                st.markdown("---")
+                
+                # Tablica s detaljima rokova
+                cols_rok = ['LA-ID', 'Referenca', 'Datum_Naloga', 'Datum_Isporuke', 'Stvarni_Radni_Dani', 'Izracunata_Zona', 'Dopušteni_Rok_Radnih_Dana', 'Status_Roka', 'Grad']
                 st.dataframe(df_palete[cols_rok])
-                st.download_button("📥 Preuzmi rokove (CSV)", konvertiraj_u_csv(df_palete[cols_rok]), "rokovi_isporuke_pdf.csv", "text/csv")
+                st.download_button("📥 Preuzmi analitiku rokova (CSV)", konvertiraj_u_csv(df_palete[cols_rok]), "analitika_rokova_isporuke.csv", "text/csv")
                 
             # 3. Zbirni pregled
             with tab3:
@@ -220,14 +242,12 @@ if uploaded_pdf is not None:
             with tab4:
                 st.subheader("Usporedba pošiljaka zbrojenih po referencama / LA-ID brojevima")
                 
-                # Agregacija po LA-ID i Referenci
                 df_posiljke = df_palete.groupby(['LA-ID', 'Referenca', 'Grad', 'Izracunata_Zona', 'Datum_Naloga', 'Datum_Isporuke']).agg(
                     Broj_Paleta=('Masa_Palete_KG', 'count'),
                     Ukupna_Masa_KG=('Masa_Palete_KG', 'sum'),
                     Ugovoreno_Ukupno_EUR=('Ugovoreno_Paleta_Sa_Gorivom', 'sum')
                 ).reset_index()
                 
-                # Dodavanje naplaćenog iznosa iz PDF-a
                 df_posiljke['Naplaćeno_Po_PDF_EUR'] = df_posiljke['LA-ID'].map(pdf_iznosi).fillna(0.0)
                 df_posiljke['Razlika (Naplaćeno - Ugovoreno)'] = round(df_posiljke['Naplaćeno_Po_PDF_EUR'] - df_posiljke['Ugovoreno_Ukupno_EUR'], 2)
                 
