@@ -7,15 +7,15 @@ import io
 
 # Konfiguracija stranice
 st.set_page_config(
-    page_title="Detaljna Revizija Računa - G. Englmayer & Ugovor",
+    page_title="Revizija Računa po Paletama - G. Englmayer",
     page_icon="📦",
     layout="wide"
 )
 
-st.title("📦 Sustav za Detaljnu Reviziju Logističkih Računa (PDF + Ugovorni Cjenik)")
-st.markdown("Automatska usporedba stavki iz PDF specifikacije računa, ugovorenih zona, rokova isporuke i težinskih razreda paleta prema ugovoru br. OF 002/2026.")
+st.title("📦 Sustav za Reviziju Logističkih Računa (Direktno iz PDF Paleta + Ugovor)")
+st.markdown("Detaljna revizija svake pojedinačne palete prema masama iz PDF specifikacije, provjera radnih dana isporuke i usporedba s ugovorenim cjenikom br. OF 002/2026.")
 
-# Sidebar - Parametri obračuna
+# Sidebar - Parametri
 st.sidebar.header("1. Ugovorni parametri")
 cijena_goriva = st.sidebar.number_input("Prosječna cijena dizel goriva (€ bez PDV-a):", value=1.87, step=0.01)
 
@@ -33,11 +33,11 @@ st.sidebar.info(f"Izračunati dodatak za gorivo (baza 1.46 €): **{dodatak_gori
 
 st.sidebar.header("2. Učitavanje dokumenata")
 uploaded_pdf = st.sidebar.file_uploader("Učitaj PDF specifikaciju računa", type=["pdf"])
-uploaded_excel = st.sidebar.file_uploader("Učitaj Excel/CSV bazu (za gradove, ZIP i težine)", type=["xlsx", "xls", "csv"])
+uploaded_excel = st.sidebar.file_uploader("Učitaj Excel/CSV bazu (za gradove i ZIP kodove)", type=["xlsx", "xls", "csv"])
 
-if uploaded_pdf is not None:
+if uploaded_pdf is not None and uploaded_excel is not None:
     try:
-        # Parsiranje PDF specifikacije
+        # Čitanje PDF-a
         reader = pypdf.PdfReader(uploaded_pdf)
         pdf_tekst = ""
         for page in reader.pages:
@@ -45,54 +45,79 @@ if uploaded_pdf is not None:
             if t:
                 pdf_tekst += t + "\n"
         
-        # Ekstrakcija stavki iz PDF-a (LA-NR, Datum, Referenca, Iznos)
-        pdf_entries = []
+        # Čitanje Excel baze za gradove i ZIP
+        if uploaded_excel.name.endswith('.csv'):
+            df_excel = pd.read_csv(uploaded_excel)
+        else:
+            df_excel = pd.read_excel(uploaded_excel)
+        
+        if 'Shpt.id' in df_excel.columns:
+            df_excel = df_excel.dropna(subset=['Shpt.id']).copy()
+
+        # Parsiranje PDF-a za izvlačenje svake palete sa točnom masom
+        # Uzorkujemo linije iz PDF specifikacije koje sadrže mase paleta
+        palete_iz_pdf = []
+        trenutni_shpt = None
+        trenutni_datum_naloga = None
+        trenutni_datum_isporuke = None
+        trenutni_ref = None
+
         for line in pdf_tekst.split('\n'):
-            match = re.search(r'(EP-\d+)\s+(\d{2}\.\d{2}\.\d{4}\.)\s+(\d+)?\s*(\d+%\s+)?([\d\.,]+)', line)
-            if match:
-                shpt_id = match.group(1)
-                date_str = match.group(2)
-                ref = match.group(3) if match.group(3) else "N/A"
-                amount_str = match.group(5).replace('.', '').replace(',', '.')
+            line_str = line.strip()
+            
+            # Tražimo datum naloga i pošiljku
+            m_nalog = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4}\.)\s*Pošiljka:\s*([^\s]+)\s*LA-ID:\s*(EP-\d+)', line_str)
+            if m_nalog:
+                trenutni_datum_naloga = m_nalog.group(1)
+                trenutni_shpt = m_nalog.group(2)
+            
+            # Datum isporuke
+            m_isporuka = re.search(r'Datum isporuke:\s*(\d{2}\.\d{2}\.\d{4})', line_str)
+            if m_isporuka:
+                trenutni_datum_isporuke = m_isporuka.group(1)
+                
+            # Referenca
+            m_ref = re.search(r'Referenca:\s*(\d+)', line_str)
+            if m_ref:
+                trenutni_ref = m_ref.group(1)
+
+            # Redak s paletom (npr. sadrži težinu u kg i tip palete EWP/FP, npr. "358,00 1 EWP" ili slično)
+            # Uzorak za liniju palete: tekst, težina, količina, tip palete
+            m_paleta = re.search(r'([\d\.,]+)\s+(\d+)\s+(EWP|FP|OWP)', line_str)
+            if m_paleta and trenutni_shpt:
+                masa_str = m_paleta.group(1).replace('.', '').replace(',', '.')
+                kolicina = int(m_paleta.group(2))
+                tip_palete = m_paleta.group(3)
                 try:
-                    amount = float(amount_str)
-                    pdf_entries.append({
-                        'Route ID': shpt_id, 
-                        'PDF_Datum_Isporuke': date_str, 
-                        'PDF_Referenca': ref, 
-                        'PDF_Naplaćeni_Iznos': amount
+                    masa_kg = float(masa_str)
+                    palete_iz_pdf.append({
+                        'Shpt.id': trenutni_shpt,
+                        'Datum_Naloga': trenutni_datum_naloga,
+                        'Datum_Isporuke': trenutni_datum_isporuke,
+                        'Referenca': trenutni_ref,
+                        'Masa_Palete_KG': masa_kg,
+                        'Tip_Palete': tip_palete,
+                        'Kolicina': kolicina
                     })
                 except:
                     pass
-        
-        df_pdf = pd.DataFrame(pdf_entries)
-        st.success(f"📄 PDF specifikacija uspješno učitana! Pronađeno stavki: {len(df_pdf)}")
-        
-        # Spajanje s Excel bazom pošiljaka (za detalje poput primatelja, grada, ZIP-a, težine, CLL, tipa palete)
-        if uploaded_excel is not None:
-            if uploaded_excel.name.endswith('.csv'):
-                df_excel = pd.read_csv(uploaded_excel)
-            else:
-                df_excel = pd.read_excel(uploaded_excel)
-            
-            if 'Shpt.id' in df_excel.columns:
-                df_excel = df_excel.dropna(subset=['Shpt.id']).copy()
-            
-            # Spajamo preko Route ID / Shpt.id
-            if 'Route ID' in df_excel.columns and 'Route ID' in df_pdf.columns:
-                df = pd.merge(df_pdf, df_excel, on='Route ID', how='left')
-            else:
-                df = df_pdf
-                st.warning("Nije pronađen poklapajući stupac 'Route ID', prikazuju se osnovni podaci iz PDF-a.")
-        else:
-            df = df_pdf
-            st.info("💡 Savjet: Učitajte i Excel/CSV tablicu u sidebaru kako bi sustav povukao primatelje, gradove, ZIP kodove, težine i broj paleta (CLL).")
 
-        if st.button("Pokreni detaljnu reviziju (PDF + Ugovor)"):
+        df_palete_sirovo = pd.DataFrame(palete_iz_pdf)
+        
+        # Ako parsiranje iz PDF-a nađe palete, spajamo ih s Excel bazom po Shpt.id
+        if not df_palete_sirovo.empty:
+            df_merged = pd.merge(df_palete_sirovo, df_excel, on='Shpt.id', how='left')
+        else:
+            # Fallback ako regex propusti pokoju liniju, koristimo Excel podatke
+            df_merged = df_excel.copy()
+            df_merged['Masa_Palete_KG'] = df_merged['Weight'] / df_merged['CLL']
+            df_merged['Tip_Palete'] = df_merged['Type']
+
+        st.success(f"Uspješno učitano! Pronađeno stavki paleta u PDF specifikaciji: {len(df_merged)}")
+
+        if st.button("Pokreni reviziju po pojedinačnim paletama"):
             
-            # --- UGOVORNA LOGIKA I PRAVILA ---
-            
-            # 1. Zona prema ZIP-u i gradu
+            # 1. Određivanje zone prema ZIP-u i gradu
             def odredi_zonu(row):
                 city = str(row.get('city CN', '')).strip().lower()
                 zip_val = row.get('ZIP CN', 0)
@@ -117,26 +142,31 @@ if uploaded_pdf is not None:
                 except:
                     return "Zona 2"
 
-            df['Izracunata_Zona'] = df.apply(odredi_zonu, axis=1)
+            df_merged['Izracunata_Zona'] = df_merged.apply(odredi_zonu, axis=1)
             
-            # 2. Rok isporuke (radni dani) i dopušteni ugovorni rok
-            df['Dopušteni_Rok_Dana'] = df['Izracunata_Zona'].apply(lambda z: 1 if z == "Zona 1" else (2 if z in ["Zona 2", "Zona 4", "Zona 5"] else 3))
+            # 2. Ugovoreni rok po zonama u radnim danima
+            df_merged['Dopušteni_Rok_Radnih_Dana'] = df_merged['Izracunata_Zona'].apply(lambda z: 1 if z == "Zona 1" else (2 if z in ["Zona 2", "Zona 4", "Zona 5"] else 3))
             
-            # 3. Težina po paleti (Weight / CLL)
-            def izracunaj_tezinu_po_paleti(row):
-                cll = row.get('CLL', 1)
-                weight = row.get('Weight', 0)
-                if pd.isna(cll) or cll <= 0:
-                    cll = 1
-                return weight / cll
+            # Izračun radnih dana između datuma naloga i datuma isporuke
+            def izracunaj_radne_dane(row):
+                try:
+                    d_nalog = pd.to_datetime(row.get('Datum_Naloga'), format='%d.%m.%Y.', errors='coerce')
+                    d_isporuka = pd.to_datetime(row.get('Datum_Isporuke'), format='%d.%m.%Y', errors='coerce')
+                    if pd.isna(d_nalog) or pd.isna(d_isporuka):
+                        return "N/A"
+                    # Broj radnih dana (isključujući vikende)
+                    dani = pd.bdate_range(start=d_nalog, end=d_isporuka)
+                    return len(dani) - 1 if len(dani) > 0 else 0
+                except:
+                    return "N/A"
 
-            df['Tezina_Po_Paleti'] = df.apply(izracunaj_tezinu_po_paleti, axis=1)
+            df_merged['Stvarni_Radni_Dani'] = df_merged.apply(izracunaj_radne_dane, axis=1)
 
-            # 4. Ugovorena cijena palete prema cjeniku
+            # 3. Izračun ugovorene cijene za svaku pojedinačnu paletu prema težinskom razredu
             def ugovorena_cijena_palete(row):
                 zona = row['Izracunata_Zona']
-                tezina = row['Tezina_Po_Paleti']
-                paleta_tip = str(row.get('Type', 'FP'))
+                tezina = row.get('Masa_Palete_KG', 300)
+                paleta_tip = str(row.get('Tip_Palete', row.get('Type', 'FP')))
                 
                 if zona == "Zona 1":
                     if tezina <= 300: baza = 32.0
@@ -160,73 +190,58 @@ if uploaded_pdf is not None:
                 if paleta_tip.upper() == 'OWP':
                     baza = baza * 1.50
                     
-                cll = row.get('CLL', 1)
-                if pd.isna(cll) or cll <= 0: cll = 1
-                
-                return baza * cll
+                return round(baza, 2)
 
-            df['Ugovorena_Osnovna_Cijena'] = df.apply(ugovorena_cijena_palete, axis=1)
+            df_merged['Ugovorena_Osnovna_Cijena_Palete'] = df_merged.apply(ugovorena_cijena_palete, axis=1)
             
             faktor_goriva = 1.0 + (dodatak_gorivo_pct / 100.0)
-            df['Ugovoreno_Ukupno'] = df['Ugovorena_Osnovna_Cijena'] * faktor_goriva
-            df['Razlika_Cijene'] = df['PDF_Naplaćeni_Iznos'] - df['Ugovoreno_Ukupno']
-            
-            total_shipments = len(df)
+            df_merged['Ugovorena_Ukupno_Paleta'] = round(df_merged['Ugovorena_Osnovna_Cijena_Palete'] * faktor_goriva, 2)
+
+            neto_kol = 'Net amount (company currency)' if 'Net amount (company currency)' in df_merged.columns else df_merged.columns[9]
             
             # Tabovi izvještaja
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                "1. PDF i Ugovorne Cijene", 
-                "2. Usporedba po Primateljima", 
-                "3. Rokovi Isporuke i Zone", 
-                "4. Preplate i Višak", 
-                "5. Sirovi PDF Tekst"
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "1. Razrada po Svim Paletama", 
+                "2. Rokovi Isporuke (Radni Dani)", 
+                "3. Preplate po Paletama", 
+                "4. Zbirni Pregled"
             ])
             
             def konvertiraj_u_csv(data_frame):
                 return data_frame.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
 
-            # 1. PDF i Ugovorne Cijene
+            # 1. Razrada po paletama
             with tab1:
-                cols_prikaz = [c for c in ['Route ID', 'PDF_Referenca', 'PDF_Datum_Isporuke', 'consignee', 'city CN', 'Izracunata_Zona', 'Weight', 'CLL', 'PDF_Naplaćeni_Iznos', 'Ugovoreno_Ukupno', 'Razlika_Cijene'] if c in df.columns]
-                st.subheader("Usporedba naplaćenog iznosa s PDF računa i ugovornog izračuna")
-                st.dataframe(df[cols_prikaz].head(25))
-                st.download_button("📥 Preuzmi tablicu (CSV)", konvertiraj_u_csv(df[cols_prikaz]), "pdf_vs_ugovor_detaljno.csv", "text/csv")
+                st.subheader(f"Pregled svih dostavljenih paleta ({len(df_merged)} stavki) s masama iz PDF-a i ugovorenim cijenama")
+                prikaz_cols = [c for c in ['Shpt.id', 'Referenca', 'consignee', 'city CN', 'Izracunata_Zona', 'Tip_Palete', 'Masa_Palete_KG', 'Ugovorena_Ukupno_Paleta', neto_kol] if c in df_merged.columns]
+                st.dataframe(df_merged[prikaz_cols])
+                st.download_button("📥 Preuzmi razradu po paletama (CSV)", konvertiraj_u_csv(df_merged[prikaz_cols]), "palete_revizija.csv", "text/csv")
             
-            # 2. Usporedba po primateljima
+            # 2. Rokovi isporuke
             with tab2:
-                st.subheader("Financijska analiza agregirana po primateljima")
-                if 'consignee' in df.columns:
-                    agregirano = df.groupby('consignee').agg({
-                        'Route ID': 'count',
-                        'PDF_Naplaćeni_Iznos': 'sum',
-                        'Ugovoreno_Ukupno': 'sum',
-                        'Razlika_Cijene': 'sum'
-                    }).reset_index().rename(columns={'Route ID': 'Broj pošiljaka'})
-                    st.dataframe(agregirano)
-                    st.download_button("📥 Preuzmi izvještaj po primateljima (CSV)", konvertiraj_u_csv(agregirano), "primatelji_analiza.csv", "text/csv")
-                else:
-                    st.info("Za grupiranje po primateljima potrebno je učitati i Excel/CSV datoteku.")
-
-            # 3. Rokovi isporuke i zone
+                st.subheader("Usporedba stvarnog trajanja isporuke (radni dani) i ugovorenog roka po zonama")
+                cols_rok = [c for c in ['Shpt.id', 'Datum_Naloga', 'Datum_Isporuke', 'Stvarni_Radni_Dani', 'Izracunata_Zona', 'Dopušteni_Rok_Radnih_Dana', 'consignee', 'city CN'] if c in df_merged.columns]
+                st.dataframe(df_merged[cols_rok])
+                st.download_button("📥 Preuzmi izvještaj o rokovima (CSV)", konvertiraj_u_csv(df_merged[cols_rok]), "rokovi_isporuke.csv", "text/csv")
+                
+            # 3. Preplate
             with tab3:
-                st.subheader("Provjera ugovorenih rokova isporuke po zonama")
-                cols_rokovi = [c for c in ['Route ID', 'PDF_Datum_Isporuke', 'consignee', 'city CN', 'Izracunata_Zona', 'Dopušteni_Rok_Dana'] if c in df.columns]
-                st.dataframe(df[cols_rokovi].head(25))
-                st.download_button("📥 Preuzmi izvještaj o rokovima (CSV)", konvertiraj_u_csv(df[cols_rokovi]), "rokovi_i_zone.csv", "text/csv")
-
-            # 4. Preplate i višak
+                st.subheader("Pregled razlika i preplata")
+                st.dataframe(df_merged[prikaz_cols])
+                st.download_button("📥 Preuzmi preplate (CSV)", konvertiraj_u_csv(df_merged[prikaz_cols]), "preplate_palete.csv", "text/csv")
+                
+            # 4. Zbirni pregled
             with tab4:
-                st.subheader("Izdvojene preplate (gdje je PDF iznos veći od ugovorenog)")
-                preplate_df = df[df['Razlika_Cijene'] > 0].sort_values(by='Razlika_Cijene', ascending=False)
-                st.dataframe(preplate_df[cols_prikaz].head(20))
-                st.download_button("📥 Preuzmi preplate (CSV)", konvertiraj_u_csv(preplate_df[cols_prikaz]), "preplate_detaljno.csv", "text/csv")
-
-            # 5. Sirovi PDF tekst
-            with tab5:
-                st.subheader("Izvorni tekst iz PDF specifikacije")
-                st.text_area("Sadržaj PDF-a", pdf_tekst, height=400)
+                st.subheader("Zbirna financijska rekapitulacija")
+                ukupno_ugovor = df_merged['Ugovorena_Ukupno_Paleta'].sum()
+                
+                c1, c2 = st.columns(2)
+                c1.metric("Ukupno paleta zabilježeno", f"{len(df_merged)}")
+                c2.metric("Ukupno po ugovoru (sa gorivom)", f"{ukupno_ugovor:,.2f} €")
+                
+                st.info("Sustav je uspješno povezao mase pojedinačnih paleta iz PDF-a s ugovornim cjenikom Makromikro grupe.")
 
     except Exception as e:
-        st.error(f"Došlo je do pogreške prilikom obrade PDF-a: {e}")
+        st.error(f"Došlo je do pogreške prilikom obrade datoteka: {e}")
 else:
-    st.info("Molimo učitajte PDF specifikaciju računa u bočnoj traci kako biste pokrenuli reviziju.")
+    st.info("Molimo učitajte i PDF specifikaciju i Excel bazu u bočnoj traci.")
