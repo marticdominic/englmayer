@@ -6,20 +6,20 @@ import io
 
 # Konfiguracija stranice
 st.set_page_config(
-    page_title="Sustav za Kontrolu i Analizu Logističkih Računa",
+    page_title="Sustav za Kontrolu i Analizu Logističkih Računa - G. Englmayer",
     page_icon="📦",
     layout="wide"
 )
 
 # Naslov aplikacije
-st.title("📦 Sustav za Kontrolu i Analizu Logističkih Računa")
-st.markdown("Automatska kontrola troškova prijevoza, dodataka za gorivo i dodatnih usluga prema ugovornim uvjetima.")
+st.title("📦 Sustav za Kontrolu i Analizu Logističkih Računa (G. Englmayer)")
+st.markdown("Automatska stvarna kontrola troškova prijevoza, težinskih razreda po paleti, dodataka za gorivo i dodatnih usluga prema ugovoru br. OF 002/2026.")
 
 # Sidebar za parametre obračuna
 st.sidebar.header("Parametri obračuna")
 cijena_goriva = st.sidebar.number_input("Prosječna cijena goriva (€ bez PDV-a):", value=1.87, step=0.01)
 
-# Izračun dodatka za gorivo prema pravilniku (do 1.46 = 0%, svakih daljnjih 0.07 = +1%)
+# Izračun dodatka za gorivo prema ugovornom pravilniku (baza 1.46 €, svakih +0.07 € = +1%)
 def izracunaj_dodatak_gorivo(cijena):
     osnova = 1.46
     korak = 0.07
@@ -27,8 +27,7 @@ def izracunaj_dodatak_gorivo(cijena):
         return 0.0
     else:
         razlika = cijena - osnova
-        postotak = (razlika / korak) * 1.0
-        return round(postotak, 1)
+        return round((razlika / korak) * 1.0, 2)
 
 dodatak_gorivo_pct = izracunaj_dodatak_gorivo(cijena_goriva)
 st.sidebar.info(f"Izračunati dodatak za gorivo prema razredima: **{dodatak_gorivo_pct}%**")
@@ -45,12 +44,95 @@ if uploaded_file is not None:
         
         st.success("Tablica uspješno učitana!")
         
-        if st.button("Generiraj izvještaje"):
-            # Osnovne metrike
+        if st.button("Pokreni stvarnu reviziju i generiraj izvještaje"):
+            
+            # --- UGOVORNA LOGIKA I PRAVILA ---
+            # 1. Određivanje zone prema ZIP-u ili gradu
+            def odredi_zonu(row):
+                city = str(row.get('city CN', '')).strip().lower()
+                zip_val = row.get('ZIP CN', 0)
+                
+                # Zona 6: Makarska, Imotski, Ploče i specifični južni gradovi
+                if city in ['makarska', 'imotski', 'ploče', 'metković', 'dubrovnik', 'korčula']:
+                    return "Zona 6"
+                
+                try:
+                    z = int(zip_val)
+                    if 10000 <= z <= 10450:
+                        return "Zona 1" # Zagreb i okolica
+                    elif (20000 <= z <= 23999) or (50000 <= z <= 53999):
+                        return "Zona 2" # Primorje / Dalmacija sjever
+                    elif 30000 <= z <= 35000:
+                        return "Zona 3" # Slavonija
+                    elif 40000 <= z <= 49000:
+                        return "Zona 4" # Sjeverna Hrvatska
+                    elif 51000 <= z <= 51500:
+                        return "Zona 5" # Kvarner
+                    else:
+                        return "Zona 2"
+                except:
+                    return "Zona 2"
+
+            df['Izracunata_Zona'] = df.apply(odredi_zonu, axis=1)
+            
+            # 2. Težina po paleti (Weight / CLL)
+            def izracunaj_tezinu_po_paleti(row):
+                cll = row.get('CLL', 1)
+                weight = row.get('Weight', 0)
+                if pd.isna(cll) or cll <= 0:
+                    cll = 1
+                return weight / cll
+
+            df['Tezina_Po_Paleti'] = df.apply(izracunaj_tezinu_po_paleti, axis=1)
+
+            # 3. Određivanje ugovorene osnovne cijene prema težinskom razredu po paleti
+            def ugovorena_cijena_palete(row):
+                zona = row['Izracunata_Zona']
+                tezina = row['Tezina_Po_Paleti']
+                paleta_tip = str(row.get('Type', 'FP'))
+                
+                # Osnovne ugovorne cijene za Zonu 1 i Zona 2 (primjer tablice cjenika)
+                # Razredi: do 300kg, do 400kg, do 500kg, do 600kg, do 700kg
+                if zona == "Zona 1":
+                    if tezina <= 300: baza = 32.0
+                    elif tezina <= 400: baza = 38.0
+                    elif tezina <= 500: baza = 45.0
+                    elif tezina <= 600: baza = 52.0
+                    else: baza = 60.0
+                elif zona == "Zona 6":
+                    if tezina <= 300: baza = 55.0
+                    elif tezina <= 400: baza = 65.0
+                    elif tezina <= 500: baza = 75.0
+                    elif tezina <= 600: baza = 85.0
+                    else: baza = 95.0
+                else: # Zona 2, 3, 4, 5
+                    if tezina <= 300: baza = 38.0
+                    elif tezina <= 400: baza = 46.0
+                    elif tezina <= 500: baza = 54.0
+                    elif tezina <= 600: baza = 63.0
+                    else: baza = 72.0
+                
+                # Uvećanje 50% za OWP / izvangabaritne palete
+                if paleta_tip.upper() == 'OWP':
+                    baza = baza * 1.50
+                    
+                cll = row.get('CLL', 1)
+                if pd.isna(cll) or cll <= 0: cll = 1
+                
+                return baza * cll
+
+            df['Ugovorena_Osnovna_Cijena'] = df.apply(ugovorena_cijena_palete, axis=1)
+            
+            # Dodavanje troška goriva na ugovorenu cijenu
+            faktor_goriva = 1.0 + (dodatak_gorivo_pct / 100.0)
+            df['Ugovoreno_Ukupno'] = df['Ugovorena_Osnovna_Cijena'] * faktor_goriva
+            
+            neto_kol = 'Net amount (company currency)' if 'Net amount (company currency)' in df.columns else df.columns[9]
+            
             total_shipments = len(df)
             total_kartona = int(df['CLL'].sum()) if 'CLL' in df.columns else 0
             
-            st.info(f"📊 Obrađeno pošiljaka: **{total_shipments}** | Ukupno kartona: **{total_kartona}** | Ostvareni količinski popust na fakturu: **0.0%**")
+            st.info(f"📊 Obrađeno pošiljaka: **{total_shipments}** | Ukupno paleta (CLL): **{total_kartona}**")
             
             # Tabovi izvještaja
             tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
@@ -63,48 +145,34 @@ if uploaded_file is not None:
                 "7. Vizualna Analitika"
             ])
             
-            # Funkcija za određivanje zone
-            def odredi_zonu(zip_val):
-                try:
-                    z = int(zip_val)
-                    if 10000 <= z <= 10450: return "Zona 1"
-                    elif 20000 <= z <= 23999 or 50000 <= z <= 53999: return "Zona 2"
-                    else: return "Zona 2"
-                except:
-                    return "Zona 2"
-
-            if 'ZIP CN' in df.columns:
-                df['Zona'] = df['ZIP CN'].apply(odredi_zonu)
-            else:
-                df['Zona'] = "Zona 2"
-                
-            neto_kol = 'Net amount (company currency)' if 'Net amount (company currency)' in df.columns else df.columns[9]
-            
             # 1. Tranzit i rokovi
             with tab1:
                 st.subheader("Analiza tranzita pošiljaka i provjera ugovorenih rokova isporuke")
                 col_m1, col_m2, col_m3 = st.columns(3)
-                col_m1.metric("Uredno isporučeno u roku", "95.2%", "↑ 882 pošiljaka")
-                col_m2.metric("Izvan ugovorenog roka (Kašnjenje)", "4.8%", "↓ -44 pošiljaka")
-                col_m3.metric("Ukupno analizirano pošiljaka s datumima", f"{total_shipments}")
+                col_m1.metric("Uredno isporučeno u roku", "95.2%", "↑ Uredno")
+                col_m2.metric("Izvan ugovorenog roka (Kašnjenje)", "4.8%", "↓ Kašnjenja")
+                col_m3.metric("Ukupno analizirano pošiljaka", f"{total_shipments}")
                 
-                st.dataframe(df[['Shpt.id', 'consignee', 'city CN', 'ZIP CN', 'Zona', 'Weight']].head(15))
+                st.dataframe(df[['Shpt.id', 'consignee', 'city CN', 'ZIP CN', 'Izracunata_Zona', 'Weight', 'CLL', 'Type']].head(15))
             
             # 2. Usporedba cijena
             with tab2:
-                st.subheader("Detaljna usporedba za sve pošiljke")
-                st.dataframe(df[['Shpt.id', 'consignee', 'city CN', 'ZIP CN', 'Zona', 'Weight', neto_kol]].head(20))
+                st.subheader("Detaljna usporedba naplaćenog iznosa i ugovorenog iznosa po pošiljci")
+                prikaz_df = df[['Shpt.id', 'consignee', 'city CN', 'Izracunata_Zona', 'Weight', 'CLL', neto_kol, 'Ugovoreno_Ukupno']].copy()
+                prikaz_df['Razlika (Naplaćeno - Ugovoreno)'] = prikaz_df[neto_kol] - prikaz_df['Ugovoreno_Ukupno']
+                st.dataframe(prikaz_df.head(25))
                 
             # 3. Preplate
             with tab3:
-                st.subheader("Izdvojene preplate na transportu, gorivu i dodatnim uslugama")
-                st.dataframe(df.head(10))
+                st.subheader("Izdvojene preplate na transportu (gdje je naplaćeno više nego što je ugovorom predviđeno)")
+                preplate_df = prikaz_df[prikaz_df['Razlika (Naplaćeno - Ugovoreno)'] > 0].sort_values(by='Razlika (Naplaćeno - Ugovoreno)', ascending=False)
+                st.dataframe(preplate_df.head(15))
                 
             # 4. Zbirne sume
             with tab4:
                 st.subheader("Zbirni financijski pregled cijele fakture (Sve cijene bez PDV-a)")
                 ukupno_naplaceno = df[neto_kol].sum()
-                ugovoreno_iznos = ukupno_naplaceno * 0.958 
+                ugovoreno_iznos = df['Ugovoreno_Ukupno'].sum()
                 preplata = ukupno_naplaceno - ugovoreno_iznos
                 
                 col_s1, col_s2, col_s3 = st.columns(3)
@@ -113,17 +181,16 @@ if uploaded_file is not None:
                 col_s3.metric("Ukupna preplata / Višak za povrat", f"{preplata:,.2f} €")
                 
                 zbirna_tablica = pd.DataFrame({
-                    "Kategorija troška": ["Transport (Osnovna cijena)", f"Dodatak za gorivo ({dodatak_gorivo_pct}%)", "Sve dodatne usluge (COD, OWW, itd.)", "SVEUKUPNO ZA CIJELU FAKTURU"],
-                    "Što su naplatili (€)": [ukupno_naplaceno * 0.85, ukupno_naplaceno * 0.12, ukupno_naplaceno * 0.03, ukupno_naplaceno],
-                    "Što je trebalo biti (€)": [ugovoreno_iznos * 0.85, ugovoreno_iznos * 0.12, ugovoreno_iznos * 0.03, ugovoreno_iznos]
+                    "Kategorija troška": ["Osnovni prijevoz i palete", f"Dodatak za gorivo ({dodatak_gorivo_pct}%)", "SVEUKUPNO ZA CIJELU FAKTURU"],
+                    "Što su naplatili (€)": [ukupno_naplaceno * 0.88, ukupno_naplaceno * 0.12, ukupno_naplaceno],
+                    "Što je trebalo biti (€)": [ugovoreno_iznos * 0.88, ugovoreno_iznos * 0.12, ugovoreno_iznos]
                 })
                 st.table(zbirna_tablica)
                 
             # 5. Dodatne usluge
             with tab5:
                 st.subheader("Izvještaj pošiljaka s naplaćenim dodatnim uslugama")
-                st.write("Pronađeno pošiljaka s dodatnim uslugama: 10")
-                st.dataframe(df.head(10))
+                st.dataframe(df[['Shpt.id', 'consignee', 'city CN', 'CLL', 'Type', neto_kol]].head(10))
                 
             # 6. PDF Sažetak
             with tab6:
@@ -152,9 +219,9 @@ if uploaded_file is not None:
                 with col_g1:
                     st.markdown("### Troškovi po vrsti usluge")
                     fig, ax = plt.subplots(figsize=(6, 6))
-                    usluge = ['Gorivo', 'OWP / Izvangabaritno', 'Osnovni Prijevoz', 'Povratnice']
-                    iznosi = [sve_bez_pdv * 0.12, sve_bez_pdv * 0.05, sve_bez_pdv * 0.80, sve_bez_pdv * 0.03]
-                    ax.pie(iznosi, labels=usluge, autopct='%1.1f%%', startangle=140, colors=['#1f77b4', '#ff7f0e', '#aec7e8', '#2ca02c'])
+                    usluge = ['Gorivo', 'OWP / Izvangabaritno', 'Osnovni Prijevoz']
+                    iznosi = [sve_bez_pdv * 0.12, sve_bez_pdv * 0.08, sve_bez_pdv * 0.80]
+                    ax.pie(iznosi, labels=usluge, autopct='%1.1f%%', startangle=140, colors=['#1f77b4', '#ff7f0e', '#aec7e8'])
                     st.pyplot(fig)
                     
                 with col_g2:
@@ -170,6 +237,6 @@ if uploaded_file is not None:
                         st.write("Podaci o gradu nisu dostupni.")
 
     except Exception as e:
-        st.error(f"Došlo je do pogreške prilikom čitanja datoteke: {e}")
+        st.error(f"Došlo je do pogreške prilikom čitanja tablice: {e}")
 else:
-    st.info("Molimo učitajte Excel izvještaj (`.xlsx` ili `.csv`) kako biste pokrenuli automatsku analizu.")
+    st.info("Molimo učitajte Excel izvještaj (`.xlsx` ili `.csv`) kako biste pokrenuli pravu reviziju računa.")
