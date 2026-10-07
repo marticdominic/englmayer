@@ -52,22 +52,21 @@ if uploaded_file is not None:
                 city = str(row.get('city CN', '')).strip().lower()
                 zip_val = row.get('ZIP CN', 0)
                 
-                # Zona 6: Makarska, Imotski, Ploče i specifični južni gradovi
                 if city in ['makarska', 'imotski', 'ploče', 'metković', 'dubrovnik', 'korčula']:
                     return "Zona 6"
                 
                 try:
                     z = int(zip_val)
                     if 10000 <= z <= 10450:
-                        return "Zona 1" # Zagreb i okolica
+                        return "Zona 1"
                     elif (20000 <= z <= 23999) or (50000 <= z <= 53999):
-                        return "Zona 2" # Primorje / Dalmacija sjever
+                        return "Zona 2"
                     elif 30000 <= z <= 35000:
-                        return "Zona 3" # Slavonija
+                        return "Zona 3"
                     elif 40000 <= z <= 49000:
-                        return "Zona 4" # Sjeverna Hrvatska
+                        return "Zona 4"
                     elif 51000 <= z <= 51500:
-                        return "Zona 5" # Kvarner
+                        return "Zona 5"
                     else:
                         return "Zona 2"
                 except:
@@ -91,8 +90,6 @@ if uploaded_file is not None:
                 tezina = row['Tezina_Po_Paleti']
                 paleta_tip = str(row.get('Type', 'FP'))
                 
-                # Osnovne ugovorne cijene za Zonu 1 i Zona 2 (primjer tablice cjenika)
-                # Razredi: do 300kg, do 400kg, do 500kg, do 600kg, do 700kg
                 if zona == "Zona 1":
                     if tezina <= 300: baza = 32.0
                     elif tezina <= 400: baza = 38.0
@@ -105,14 +102,13 @@ if uploaded_file is not None:
                     elif tezina <= 500: baza = 75.0
                     elif tezina <= 600: baza = 85.0
                     else: baza = 95.0
-                else: # Zona 2, 3, 4, 5
+                else: 
                     if tezina <= 300: baza = 38.0
                     elif tezina <= 400: baza = 46.0
                     elif tezina <= 500: baza = 54.0
                     elif tezina <= 600: baza = 63.0
                     else: baza = 72.0
                 
-                # Uvećanje 50% za OWP / izvangabaritne palete
                 if paleta_tip.upper() == 'OWP':
                     baza = baza * 1.50
                     
@@ -123,7 +119,6 @@ if uploaded_file is not None:
 
             df['Ugovorena_Osnovna_Cijena'] = df.apply(ugovorena_cijena_palete, axis=1)
             
-            # Dodavanje troška goriva na ugovorenu cijenu
             faktor_goriva = 1.0 + (dodatak_gorivo_pct / 100.0)
             df['Ugovoreno_Ukupno'] = df['Ugovorena_Osnovna_Cijena'] * faktor_goriva
             
@@ -145,6 +140,10 @@ if uploaded_file is not None:
                 "7. Vizualna Analitika"
             ])
             
+            # Pomoćna funkcija za pretvorbu u CSV format za preuzimanje (s podrškom za HR znakove)
+            def konvertiraj_u_csv(data_frame):
+                return data_frame.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+
             # 1. Tranzit i rokovi
             with tab1:
                 st.subheader("Analiza tranzita pošiljaka i provjera ugovorenih rokova isporuke")
@@ -153,7 +152,15 @@ if uploaded_file is not None:
                 col_m2.metric("Izvan ugovorenog roka (Kašnjenje)", "4.8%", "↓ Kašnjenja")
                 col_m3.metric("Ukupno analizirano pošiljaka", f"{total_shipments}")
                 
-                st.dataframe(df[['Shpt.id', 'consignee', 'city CN', 'ZIP CN', 'Izracunata_Zona', 'Weight', 'CLL', 'Type']].head(15))
+                df_tab1 = df[['Shpt.id', 'consignee', 'city CN', 'ZIP CN', 'Izracunata_Zona', 'Weight', 'CLL', 'Type']]
+                st.dataframe(df_tab1.head(15))
+                
+                st.download_button(
+                    label="📥 Preuzmi izvještaj 'Tranzit i rokovi' (CSV)",
+                    data=konvertiraj_u_csv(df_tab1),
+                    file_name="tranzit_i_rokovi.csv",
+                    mime="text/csv"
+                )
             
             # 2. Usporedba cijena
             with tab2:
@@ -162,11 +169,25 @@ if uploaded_file is not None:
                 prikaz_df['Razlika (Naplaćeno - Ugovoreno)'] = prikaz_df[neto_kol] - prikaz_df['Ugovoreno_Ukupno']
                 st.dataframe(prikaz_df.head(25))
                 
+                st.download_button(
+                    label="📥 Preuzmi izvještaj 'Usporedba cijena' (CSV)",
+                    data=konvertiraj_u_csv(prikaz_df),
+                    file_name="usporedba_cijena.csv",
+                    mime="text/csv"
+                )
+                
             # 3. Preplate
             with tab3:
                 st.subheader("Izdvojene preplate na transportu (gdje je naplaćeno više nego što je ugovorom predviđeno)")
                 preplate_df = prikaz_df[prikaz_df['Razlika (Naplaćeno - Ugovoreno)'] > 0].sort_values(by='Razlika (Naplaćeno - Ugovoreno)', ascending=False)
                 st.dataframe(preplate_df.head(15))
+                
+                st.download_button(
+                    label="📥 Preuzmi izvještaj 'Preplate' (CSV)",
+                    data=konvertiraj_u_csv(preplate_df),
+                    file_name="preplate_transport.csv",
+                    mime="text/csv"
+                )
                 
             # 4. Zbirne sume
             with tab4:
@@ -187,10 +208,25 @@ if uploaded_file is not None:
                 })
                 st.table(zbirna_tablica)
                 
+                st.download_button(
+                    label="📥 Preuzmi 'Zbirni financijski pregled' (CSV)",
+                    data=konvertiraj_u_csv(zbirna_tablica),
+                    file_name="zbirne_sume_faktura.csv",
+                    mime="text/csv"
+                )
+                
             # 5. Dodatne usluge
             with tab5:
                 st.subheader("Izvještaj pošiljaka s naplaćenim dodatnim uslugama")
-                st.dataframe(df[['Shpt.id', 'consignee', 'city CN', 'CLL', 'Type', neto_kol]].head(10))
+                df_usluge = df[['Shpt.id', 'consignee', 'city CN', 'CLL', 'Type', neto_kol]]
+                st.dataframe(df_usluge.head(10))
+                
+                st.download_button(
+                    label="📥 Preuzmi izvještaj 'Dodatne usluge' (CSV)",
+                    data=konvertiraj_u_csv(df_usluge),
+                    file_name="dodatne_usluge.csv",
+                    mime="text/csv"
+                )
                 
             # 6. PDF Sažetak
             with tab6:
