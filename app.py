@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s ispravnim nazivima kolona i robusnim parsiranjem odredišta.")
+st.markdown("Direktna analiza s potpuno ispravljenim i pouzdanim parsiranjem odredišta.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -83,7 +83,7 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. Robusno parsiranje pošiljaka s fokusom na paritet i primatelja
+        # 2. Beskompromisno parsiranje primatelja s ignoriranjem pošiljatelja
         redci_paleta = []
         blokovi_naloga = re.split(r'(Datum naloga:\s*\d{2}\.\d{2}\.\d{4}\.)', pdf_tekst)
         
@@ -106,25 +106,28 @@ if uploaded_pdf is not None:
             m_isporuka = re.search(r'Datum isporuke:\s*(\d{2}\.\d{2}\.\d{4})', p_nalog_tekst)
             trenutni_datum_isporuke = m_isporuka.group(1) if m_isporuka else None
 
-            # ODREĐIVANJE GRADA I ZIPA: Prvo tražimo mjesto istovara u retku "Paritet" (npr. "istovareno Đakovo")
+            # ODREĐIVANJE GRADA I ZIPA: Prolazimo kroz svaki redak naloga
             trenutni_grad = "Zagreb"
             trenutni_zip = 10000
             
-            m_paritet = re.search(r'Paritet:.*?istovareno\s+([A-Za-zČĆŠĐŽčćšđž\s]+)', p_nalog_tekst)
-            if m_paritet:
-                g_par = m_paritet.group(1).strip().split()[0]
-                if g_par and g_par.lower() != "zagreb":
-                    trenutni_grad = g_par
-
-            # Ako paritet ne da grad, tražimo bilo koji HR-ZIP u tekstu koji NIJE pošiljateljev (10410)
-            sve_pojave_zip = re.findall(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', p_nalog_tekst)
-            for z_val, g_val in sve_pojave_zip:
-                if z_val != "10410":  # Preskačemo Veliku Goricu (pošiljatelj Makromikro)
-                    trenutni_zip = int(z_val)
-                    g_clean = re.split(r'[\r\n\d/]', g_val)[0].strip()
-                    if g_clean:
-                        trenutni_grad = g_clean
-                    break
+            for line in p_nalog_tekst.split('\n'):
+                # Tražimo HR-XXXXX gdje XXXXX nije 10410 (pošiljatelj)
+                m_zips = re.findall(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', line)
+                for z_val, g_val in m_zips:
+                    if z_val != "10410":
+                        trenutni_zip = int(z_val)
+                        g_clean = re.split(r'[\r\n\d/]', g_val)[0].strip()
+                        if g_clean:
+                            trenutni_grad = g_clean
+                        break
+                
+                # Također provjeravamo paritet ako sadrži mjesto istovara
+                if "istovareno" in line.lower():
+                    parts = line.split("istovareno")
+                    if len(parts) > 1:
+                        c_cand = parts[1].strip().split()[0]
+                        if c_cand.lower() not in ["na", "mjesto", "dpu", "zagreb"]:
+                            trenutni_grad = c_cand
 
             for line in p_nalog_tekst.split('\n'):
                 m_paleta = re.search(r'^(.*?)\s+([\d\.,]+)(\d)\s+(EWP|FP|OWP)', line.strip())
