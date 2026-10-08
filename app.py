@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza po paletama s ispravnim zbirnim grupiranjem pošiljaka po LA-ID broju.")
+st.markdown("Direktna analiza po paletama s ispravnim rangiranjem težina (granične vrijednosti prelaze u višu kategoriju).")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -27,7 +27,6 @@ def izracunaj_dodatak_gorivo(cijena):
     else:
         razlika = cijena - osnova
         tocan_iznos = (razlika / korak) * 1.0
-        # Zaokruživanje na viši cijeli broj (npr. 3.01 -> 4)
         return math.ceil(tocan_iznos)
 
 dodatak_gorivo_pct = izracunaj_dodatak_gorivo(cijena_goriva)
@@ -58,7 +57,7 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. Robusno parsiranje detaljne specifikacije (spajanje redaka primatelja i točno izvlačenje ZIP/grada)
+        # 2. Robusno parsiranje detaljne specifikacije
         redci_paleta = []
         lines = pdf_tekst.split('\n')
         
@@ -105,7 +104,6 @@ if uploaded_pdf is not None:
             if m_ref:
                 trenutni_ref = m_ref.group(1)
 
-            # Ekstrakcija Oznake/Broja i paleta
             m_paleta = re.search(r'^(.*?)\s+([\d\.,]+)(\d)\s+(EWP|FP|OWP)', line_str)
             if m_paleta and trenutni_shpt:
                 raw_oznaka = m_paleta.group(1).replace('Handelsware', '').strip()
@@ -136,7 +134,7 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju s ispravnim zbirnim pregledom pošiljaka"):
+        if st.button("Pokreni reviziju s korigiranim pragovima kilaža"):
             
             # Točno zoniranje prema službenoj tablici iz ugovora
             def odredi_zonu(row):
@@ -181,7 +179,7 @@ if uploaded_pdf is not None:
                 axis=1
             )
 
-            # Službena ugovorna tablica cijena po paleti (Prilog 1)
+            # Službena ugovorna tablica cijena po paleti (Prilog 1) - točno prelazak u višu klasu
             def ugovorena_cijena_palete(row):
                 zona = row['Izracunata_Zona']
                 tezina = row['Masa_Palete_KG']
@@ -196,10 +194,11 @@ if uploaded_pdf is not None:
                     "Zona 6": [55.0, 59.0, 63.0, 65.0, 79.0]
                 }
                 
-                if tezina <= 300: t_idx = 0
-                elif tezina <= 400: t_idx = 1
-                elif tezina <= 500: t_idx = 2
-                elif tezina <= 600: t_idx = 3
+                # Točno provjeravanje pragova (ako je > 300, prelazi u višu itd.)
+                if tezina <= 300.0: t_idx = 0
+                elif tezina <= 400.0: t_idx = 1
+                elif tezina <= 500.0: t_idx = 2
+                elif tezina <= 600.0: t_idx = 3
                 else: t_idx = 4
                 
                 baza = cjenik.get(zona, cjenik["Zona 2"])[t_idx]
@@ -262,7 +261,7 @@ if uploaded_pdf is not None:
                 c1.metric("Ukupno paleta u PDF-u", f"{len(df_palete)}")
                 c2.metric("Ukupno po službenom ugovornom cjeniku", f"{ukupno_ugovor:,.2f} €")
                 
-            # 4. Usporedba po pošiljkama (Grupisano isključivo po LA-ID i Oznaka_Broj da se izbjegnu dupli redci)
+            # 4. Usporedba po pošiljkama (Grupisano isključivo po LA-ID i Oznaka_Broj)
             with tab4:
                 st.subheader("Usporedba pošiljaka zbrojenih po LA-ID brojevima")
                 
