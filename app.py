@@ -13,19 +13,19 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s čitanjem odredišta iz pariteta i automatskim mapiranjem hrvatskih poštanskih brojeva.")
+st.markdown("Direktna analiza s **prisilnim čitanjem isključivo iz retka Paritet**.")
 
 # Službeni rječnik hrvatskih gradova i poštanskih brojeva
 HR_GRADOVI_ZIP = {
-    'zagreb': 10000, 'split': 21000, 'rijeka': 51000, 'osijek': 31000,
+    'split': 21000, 'rijeka': 51000, 'osijek': 31000,
     'zadar': 23000, 'pula': 52100, 'slavonski brod': 35000, 'karlovac': 47000,
     'varaždin': 42000, 'šibenik': 22000, 'sisak': 44000, 'vinkovci': 32100,
-    'velika gorica': 10410, 'dubrovnik': 20000, 'bjelovar': 43000,
-    'koprivnica': 48000, 'vukovar': 32000, 'požega': 34000, 'đakovo': 31400,
-    'samobor': 10430, 'čakovec': 40000, 'kutina': 44320, 'rovinj': 52210,
-    'makarska': 21300, 'metković': 20350, 'imotski': 21260, 'ploče': 20340,
-    'korčula': 20260, 'zaprešić': 10290, 'sveta nedelja': 10431, 'belišće': 31551,
-    'valpovo': 31550, 'našice': 31500, 'crikvenica': 51260, 'poreč': 52440
+    'dubrovnik': 20000, 'bjelovar': 43000, 'koprivnica': 48000, 
+    'vukovar': 32000, 'požega': 34000, 'đakovo': 31400, 'samobor': 10430, 
+    'čakovec': 40000, 'kutina': 44320, 'rovinj': 52210, 'makarska': 21300, 
+    'metković': 20350, 'imotski': 21260, 'ploče': 20340, 'korčula': 20260, 
+    'zaprešić': 10290, 'sveta nedelja': 10431, 'belišće': 31551, 'valpovo': 31550, 
+    'našice': 31500, 'crikvenica': 51260, 'poreč': 52440
 }
 
 # Sidebar - Parametri obračuna
@@ -96,7 +96,7 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. Parsiranje pošiljaka s naglaskom na paritet i mapiranje gradova
+        # 2. PRISILNO ČITANJE ISKLJUČIVO IZ PARITETA
         redci_paleta = []
         blokovi_naloga = re.split(r'(Datum naloga:\s*\d{2}\.\d{2}\.\d{4}\.)', pdf_tekst)
         
@@ -119,33 +119,25 @@ if uploaded_pdf is not None:
             m_isporuka = re.search(r'Datum isporuke:\s*(\d{2}\.\d{2}\.\d{4})', p_nalog_tekst)
             trenutni_datum_isporuke = m_isporuka.group(1) if m_isporuka else None
 
-            # ODREĐIVANJE GRADA IZ PARITETA
-            trenutni_grad = "Zagreb"
-            trenutni_zip = 10000
+            # PRISILNO IZVLAČENJE IZ RETKA KOJI SADRŽI "Paritet"
+            trenutni_grad = "Nepoznato"
+            trenutni_zip = 0
             
-            m_paritet = re.search(r'Paritet:.*?istovareno\s+([A-Za-zČĆŠĐŽčćšđž\s]+)', p_nalog_tekst, re.IGNORECASE)
-            if m_paritet:
-                g_raw = m_paritet.group(1).strip().split()
-                if g_raw:
-                    c_cand = g_raw[0].strip(".,").lower()
-                    if c_cand not in ["na", "mjesto", "dpu"]:
-                        trenutni_grad = c_cand.capitalize()
+            for line in p_nalog_tekst.split('\n'):
+                if "Paritet" in line and "istovareno" in line.lower():
+                    # Uzimamo sve nakon riječi istovareno
+                    dio_nakon = re.split(r'istovareno', line, flags=re.IGNORECASE)
+                    if len(dio_nakon) > 1:
+                        c_kandidat = dio_nakon[1].strip().split()[0].strip(".,").lower()
+                        if c_kandidat:
+                            trenutni_grad = c_kandidat
+                    break
 
-            # Mapiranje imena grada u poštanski broj iz rječnika
+            # Mapiranje u ZIP iz ugovornog rječnika
             g_key = trenutni_grad.lower()
             if g_key in HR_GRADOVI_ZIP:
                 trenutni_zip = HR_GRADOVI_ZIP[g_key]
                 trenutni_grad = g_key.capitalize()
-            else:
-                # Fallback: tražimo u tekstu ako nije u rječniku
-                sve_pojave_zip = re.findall(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', p_nalog_tekst)
-                for z_val, g_val in sve_pojave_zip:
-                    if z_val != "10410":
-                        trenutni_zip = int(z_val)
-                        g_clean = re.split(r'[\r\n\d/]', g_val)[0].strip()
-                        if g_clean:
-                            trenutni_grad = g_clean
-                        break
 
             for line in p_nalog_tekst.split('\n'):
                 m_paleta = re.search(r'^(.*?)\s+([\d\.,]+)(\d)\s+(EWP|FP|OWP)', line.strip())
@@ -180,8 +172,8 @@ if uploaded_pdf is not None:
             
             def odredi_zonu(row):
                 city = str(row.get('Grad', '')).strip().lower()
-                zip_val = str(row.get('ZIP', '10000')).zfill(5)
-                prva_dva = int(zip_val[:2])
+                zip_val = str(row.get('ZIP', '00000')).zfill(5)
+                prva_dva = int(zip_val[:2]) if zip_val[:2].isdigit() else 0
                 
                 if any(g in city for g in ['makarska', 'imotski', 'ploče', 'metković', 'dubrovnik', 'korčula', 'mokosica']) or prva_dva == 20:
                     return "Zona 6"
