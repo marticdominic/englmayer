@@ -276,4 +276,19 @@ if uploaded_pdf is not None:
                 df_posiljke['Razlika (Naplaćeno - Ugovoreno)'] = round(df_posiljke['Naplaćeno_Po_PDF_EUR'] - df_posiljke['Ugovoreno_Ukupno_EUR'], 2)
                 
                 st.dataframe(df_posiljke)
-                st.download_
+                st.download_button("📥 Preuzmi usporedbu pošiljaka (CSV)", konvertiraj_u_csv(df_posiljke), "usporedba_po_posiljkama.csv", "text/csv")
+
+            # 5. Preplate po pošiljkama
+            with tab5:
+                st.subheader("Izdvojene preplate (gdje je naplaćeni iznos veći od ugovornog)")
+                if 'df_posiljke' in locals():
+                    df_preplate = df_posiljke[df_posiljke['Razlika (Naplaćeno - Ugovoreno)'] > 0].sort_values(by='Razlika (Naplaćeno - Ugovoreno)', ascending=False)
+                    st.dataframe(df_preplate)
+                    st.download_button("📥 Preuzmi preplate po pošiljkama (CSV)", konvertiraj_u_csv(df_preplate), "preplate_po_posiljkama.csv", "text/csv")
+                else:
+                    st.info("Pregledajte prvo tab 4 za izračun.")
+
+    except Exception as e:
+        st.error(f"Greška kod obrade PDF-a: {e}")
+else:
+    st.info("Molimo učitajte PDF specifikaciju računa u bočnoj traci.")
