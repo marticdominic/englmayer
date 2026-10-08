@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s preciznim parsiranjem primatelja iz retka 'Primatelj'.")
+st.markdown("Direktna analiza s ispravnim parsiranjem višeratnih blokova primatelja.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -83,7 +83,7 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. Ultra-precizno parsiranje redaka pošiljaka
+        # 2. Parsiranje pošiljaka s praćenjem višeratnog bloka primatelja
         redci_paleta = []
         lines = pdf_tekst.split('\n')
         
@@ -106,13 +106,17 @@ if uploaded_pdf is not None:
                 trenutni_grad = "Zagreb"
                 trenutni_zip = 10000
             
-            # DIREKTNO I BEZGREŠNO: Tražimo isključivo redak koji sadrži riječ "Primatelj"
+            # KLJUČNO: Kada naiđemo na "Primatelj", provjeravamo taj redak i sljedeća 2 retka
             if "Primatelj" in line_str:
-                m_zip_grad = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', line_str)
+                kombinirani_tekst = line_str
+                for offset in [1, 2]:
+                    if i + offset < len(lines):
+                        kombinirani_tekst += " " + lines[i + offset].strip()
+                
+                m_zip_grad = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', kombinirani_tekst)
                 if m_zip_grad:
                     trenutni_zip = int(m_zip_grad.group(1))
                     g_raw = m_zip_grad.group(2).strip()
-                    # Čistimo grad od telefona, brojeva ili suvišnih znakova
                     trenutni_grad = re.split(r'[\d\.,/]', g_raw)[0].strip()
 
             m_isporuka = re.search(r'Datum isporuke:\s*(\d{2}\.\d{2}\.\d{4})', line_str)
