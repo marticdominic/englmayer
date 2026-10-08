@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza po paletama s ispravnim rangiranjem težina (granične vrijednosti prelaze u višu kategoriju).")
+st.markdown("Direktna analiza po paletama s ispravnim ugovornim pragovima kilaža (točne granice prelaze u višu kategoriju).")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -134,7 +134,7 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju s korigiranim pragovima kilaža"):
+        if st.button("Pokreni reviziju s ispravnim pragovima kilaža"):
             
             # Točno zoniranje prema službenoj tablici iz ugovora
             def odredi_zonu(row):
@@ -179,7 +179,7 @@ if uploaded_pdf is not None:
                 axis=1
             )
 
-            # Službena ugovorna tablica cijena po paleti (Prilog 1) - točno prelazak u višu klasu
+            # Službena ugovorna tablica cijena po paleti (Prilog 1) - korigirano: točno 400 kg prelazi u višu kategoriju (do 500)
             def ugovorena_cijena_palete(row):
                 zona = row['Izracunata_Zona']
                 tezina = row['Masa_Palete_KG']
@@ -194,11 +194,11 @@ if uploaded_pdf is not None:
                     "Zona 6": [55.0, 59.0, 63.0, 65.0, 79.0]
                 }
                 
-                # Točno provjeravanje pragova (ako je > 300, prelazi u višu itd.)
-                if tezina <= 300.0: t_idx = 0
-                elif tezina <= 400.0: t_idx = 1
-                elif tezina <= 500.0: t_idx = 2
-                elif tezina <= 600.0: t_idx = 3
+                # Pragovi: sve preko 300 ide u indeks 1 (do 400), sve preko 400 ide u indeks 2 (do 500), itd.
+                if tezina < 300.0: t_idx = 0
+                elif tezina < 400.0: t_idx = 1
+                elif tezina < 500.0: t_idx = 2
+                elif tezina < 600.0: t_idx = 3
                 else: t_idx = 4
                 
                 baza = cjenik.get(zona, cjenik["Zona 2"])[t_idx]
