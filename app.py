@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza po paletama, točne ugovorne zone, oznake/reference pošiljaka, analitika rokova i usporedba.")
+st.markdown("Direktna analiza po paletama s vidljivim oznakama/referencama pošiljaka, točnim ugovornim zonama i rokovima.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -102,8 +102,8 @@ if uploaded_pdf is not None:
                     masa_kg = float(masa_str)
                     for _ in range(kolicina):
                         redci_paleta.append({
-                            'LA-ID': trenutni_shpt,
                             'Oznaka_Reference': trenutni_ref,
+                            'LA-ID': trenutni_shpt,
                             'Datum_Naloga': trenutni_datum_naloga,
                             'Datum_Isporuke': trenutni_datum_isporuke,
                             'Primatelj': trenutni_primatelj,
@@ -118,7 +118,7 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju s ugrađenim oznakama i zonama"):
+        if st.button("Pokreni reviziju s istaknutim oznakama i zonama"):
             
             # Točno zoniranje prema službenoj tablici iz ugovora
             def odredi_zonu(row):
@@ -208,7 +208,7 @@ if uploaded_pdf is not None:
             def konvertiraj_u_csv(data_frame):
                 return data_frame.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
 
-            # 1. Pregled po paletama
+            # 1. Pregled po paletama (Oznaka_Reference prva)
             with tab1:
                 st.subheader(f"Popis svih paleta izvađenih iz PDF-a ({len(df_palete)} stavki)")
                 st.dataframe(df_palete)
@@ -232,7 +232,7 @@ if uploaded_pdf is not None:
                 
                 st.markdown("---")
                 
-                cols_rok = ['LA-ID', 'Oznaka_Reference', 'Datum_Naloga', 'Datum_Isporuke', 'Stvarni_Radni_Dani', 'Izracunata_Zona', 'Dopušteni_Rok_Radnih_Dana', 'Status_Roka', 'Grad']
+                cols_rok = ['Oznaka_Reference', 'LA-ID', 'Datum_Naloga', 'Datum_Isporuke', 'Stvarni_Radni_Dani', 'Izracunata_Zona', 'Dopušteni_Rok_Radnih_Dana', 'Status_Roka', 'Grad']
                 st.dataframe(df_palete[cols_rok])
                 st.download_button("📥 Preuzmi analitiku rokova (CSV)", konvertiraj_u_csv(df_palete[cols_rok]), "analitika_rokova_isporuke.csv", "text/csv")
                 
@@ -248,7 +248,7 @@ if uploaded_pdf is not None:
             with tab4:
                 st.subheader("Usporedba pošiljaka zbrojenih po referencama / LA-ID brojevima")
                 
-                df_posiljke = df_palete.groupby(['LA-ID', 'Oznaka_Reference', 'Grad', 'Izracunata_Zona', 'Datum_Naloga', 'Datum_Isporuke']).agg(
+                df_posiljke = df_palete.groupby(['Oznaka_Reference', 'LA-ID', 'Grad', 'Izracunata_Zona', 'Datum_Naloga', 'Datum_Isporuke']).agg(
                     Broj_Paleta=('Masa_Palete_KG', 'count'),
                     Ukupna_Masa_KG=('Masa_Palete_KG', 'sum'),
                     Ugovoreno_Ukupno_EUR=('Ugovoreno_Paleta_Sa_Gorivom', 'sum')
