@@ -13,9 +13,9 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s prisilnim čitanjem iz pariteta i pametnim mapiranjem gradova.")
+st.markdown("Direktna analiza s čitanjem odredišta iz pariteta i automatskim dohvaćanjem poštanskih brojeva primatelja.")
 
-# Prošireni službeni rječnik hrvatskih gradova i poštanskih brojeva
+# Sveobuhvatni službeni rječnik hrvatskih gradova i poštanskih brojeva
 HR_GRADOVI_ZIP = {
     'zagreb': 10000, 'split': 21000, 'rijeka': 51000, 'osijek': 31000,
     'zadar': 23000, 'pula': 52100, 'slavonski brod': 35000, 'karlovac': 47000,
@@ -27,7 +27,10 @@ HR_GRADOVI_ZIP = {
     'korčula': 20260, 'zaprešić': 10290, 'sveta nedelja': 10431, 'belišće': 31551,
     'valpovo': 31550, 'našice': 31500, 'crikvenica': 51260, 'poreč': 52440,
     'umag': 52470, 'labin': 52220, 'pazin': 52000, 'senj': 53270, 'gospić': 53000,
-    'ogulin': 47300, 'dugo selo': 10370, 'vrbovec': 10340, 'jastrebarsko': 10450
+    'gospic': 53000, 'ogulin': 47300, 'dugo selo': 10370, 'vrbovec': 10340,
+    'jastrebarsko': 10450, 'mlini': 20207, 'fažana': 52212, 'fazana': 52212,
+    'viškovci': 31401, 'viskovci': 31401, 'viškovo': 51216, 'knin': 22300,
+    'zemunik': 23222, 'dugopolje': 21204
 }
 
 # Sidebar - Parametri obračuna
@@ -98,7 +101,7 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. PRISILNO ČITANJE IZ PARITETA S PAMETNIM PREPOZNAVANJEM
+        # 2. PARSIRANJE POŠILJAKA S PARITETOM I SIGURNIM DOHVAĆANJEM ZIP-a
         redci_paleta = []
         blokovi_naloga = re.split(r'(Datum naloga:\s*\d{2}\.\d{2}\.\d{4}\.)', pdf_tekst)
         
@@ -121,7 +124,7 @@ if uploaded_pdf is not None:
             m_isporuka = re.search(r'Datum isporuke:\s*(\d{2}\.\d{2}\.\d{4})', p_nalog_tekst)
             trenutni_datum_isporuke = m_isporuka.group(1) if m_isporuka else None
 
-            # PRISILNO IZVLAČENJE IZ RETKA S PARITETOM
+            # ČITANJE GRADA IZ PARITETA
             trenutni_grad = "Nepoznato"
             trenutni_zip = 0
             
@@ -155,6 +158,17 @@ if uploaded_pdf is not None:
                         c_ista = c_kandidat[0].strip(".,").capitalize()
                         if c_ista.lower() not in ["na", "mjesto", "dpu"]:
                             trenutni_grad = c_ista
+                            c_key = c_ista.lower()
+                            if c_key in HR_GRADOVI_ZIP:
+                                trenutni_zip = HR_GRADOVI_ZIP[c_key]
+
+            # DODATNA SIGURNOST: Ako ZIP i dalje nije nađen iz rječnika, tražimo ga iz primatelja u PDF-u (ignorišući 10410)
+            if trenutni_zip == 0:
+                sve_pojave_zip = re.findall(r'HR-(\d{5})', p_nalog_tekst)
+                for z_val in sve_pojave_zip:
+                    if z_val != "10410":
+                        trenutni_zip = int(z_val)
+                        break
 
             for line in p_nalog_tekst.split('\n'):
                 m_paleta = re.search(r'^(.*?)\s+([\d\.,]+)(\d)\s+(EWP|FP|OWP)', line.strip())
@@ -192,7 +206,7 @@ if uploaded_pdf is not None:
                 zip_val = str(row.get('ZIP', '00000')).zfill(5)
                 prva_dva = int(zip_val[:2]) if zip_val[:2].isdigit() else 0
                 
-                if any(g in city for g in ['makarska', 'imotski', 'ploče', 'metković', 'dubrovnik', 'korčula', 'mokosica']) or prva_dva == 20:
+                if any(g in city for g in ['makarska', 'imotski', 'ploče', 'metković', 'dubrovnik', 'korčula', 'mokosica', 'mlini']) or prva_dva == 20:
                     return "Zona 6"
                 
                 if prva_dva == 10:
@@ -310,7 +324,7 @@ if uploaded_pdf is not None:
                     Datum_Isporuke=('Datum_Isporuke', 'max'),
                     Broj_Paleta=('Masa_Palete_KG', 'count'),
                     Ukupna_Masa_KG=('Masa_Palete_KG', 'sum'),
-                    Ugovoreno_Osnovna_EUR=('Ugovorena_Osnovna_Ukupno', 'sum'),
+                    Ugovoreno_Osnovna_EUR=('Ugovoreno_Osnovna_Ukupno', 'sum'),
                     Ugovoreno_Gorivo_EUR=('Ugovoreni_Iznos_Goriva', 'sum'),
                     Ugovoreno_Ukupno_EUR=('Ugovoreno_Paleta_Sa_Gorivom', 'sum')
                 ).reset_index()
