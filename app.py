@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s poboljšanim prepoznavanjem primatelja i gradova isporuke.")
+st.markdown("Direktna analiza s ispravnim prepoznavanjem retka primatelja.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -83,84 +83,76 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. Inteligentno parsiranje pošiljaka s direktnim traženjem primatelja i odredišta
+        # 2. Parsiranje pošiljaka s preciznim hvatanjem retka "Primatelj" (gdje je sve u istom retku)
         redci_paleta = []
-        blokovi_naloga = re.split(r'(Datum naloga:\s*\d{2}\.\d{2}\.\d{4}\.)', pdf_tekst)
+        lines = pdf_tekst.split('\n')
         
-        for b_idx in range(1, len(blokovi_naloga), 2):
-            b_meta = blokovi_naloga[b_idx]
-            b_sadrzaj = blokovi_naloga[b_idx + 1] if (b_idx + 1) < len(blokovi_naloga) else ""
+        trenutni_shpt = None
+        trenutni_datum_naloga = None
+        trenutni_datum_isporuke = None
+        trenutni_ref = "N/A"
+        trenutni_grad = "Zagreb"
+        trenutni_zip = 10000
+        
+        i = 0
+        while i < len(lines):
+            line_str = lines[i].strip()
             
-            p_nalog_tekst = b_meta + b_sadrzaj
+            m_nalog = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4}\.)\s*Pošiljka:\s*([^\s]+)\s*LA-ID:\s*(EP-\d+)', line_str)
+            if m_nalog:
+                trenutni_datum_naloga = m_nalog.group(1)
+                trenutni_shpt = m_nalog.group(3)
+                trenutni_ref = "N/A"
+                trenutni_grad = "Zagreb"
+                trenutni_zip = 10000
             
-            m_meta_info = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4}\.)\s*Pošiljka:\s*([^\s]+)\s*LA-ID:\s*(EP-\d+)', p_nalog_tekst)
-            if not m_meta_info:
-                continue
-                
-            trenutni_datum_naloga = m_meta_info.group(1)
-            trenutni_shpt = m_meta_info.group(3)
-            
-            m_ref = re.search(r'Referenca:\s*([^\s]+)', p_nalog_tekst)
-            trenutni_ref = m_ref.group(1) if m_ref else "N/A"
-            
-            m_isporuka = re.search(r'Datum isporuke:\s*(\d{2}\.\d{2}\.\d{4})', p_nalog_tekst)
-            trenutni_datum_isporuke = m_isporuka.group(1) if m_isporuka else None
-
-            # Određivanje grada i ZIP-a: Prvo provjeravamo redak "Primatelj", a ako ga nema, tražimo u paritetu ili cijelom bloku
-            trenutni_grad = "Zagreb"
-            trenutni_zip = 10000
-            
-            # Tražimo dio teksta nakon riječi "Primatelj"
-            if "Primatelj" in p_nalog_tekst:
-                p_dio = p_nalog_tekst.split("Primatelj")[1]
-                p_dio = p_dio.split("Oznaka/Broj")[0] if "Oznaka/Broj" in p_dio else p_dio
-                
-                # Tražimo HR-XXXXX i pripadajući grad
-                m_z = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', p_dio)
-                if m_z:
-                    trenutni_zip = int(m_z.group(1))
-                    g_raw = m_z.group(2).strip()
+            # KLJUČNA IZMJENA: Ako redak sadrži riječ "Primatelj" (jer je u istom retku s podacima)
+            if "Primatelj" in line_str:
+                # Tražimo HR-ZIP i grad direktno u tom retku ili spojenom tekstu
+                m_zip_grad = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', line_str)
+                if m_zip_grad:
+                    trenutni_zip = int(m_zip_grad.group(1))
+                    g_raw = m_zip_grad.group(2).strip()
                     trenutni_grad = re.split(r'[\r\n\d]', g_raw)[0].strip()
-            
-            # Fallback: Ako nije našlo unutar primatelja, tražimo bilo gdje u tekstu naloga HR-ZIP koji nije pošiljateljev (10410)
-            if trenutni_zip == 10000 or trenutni_grad == "Zagreb":
-                sve_pojave = re.findall(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', p_nalog_tekst)
-                for z_val, g_val in sve_pojave:
-                    if z_val != "10410": # Ignoriramo Makromikro (Velika Gorica 10410)
-                        trenutni_zip = int(z_val)
-                        trenutni_grad = re.split(r'[\r\n\d]', g_val)[0].strip()
-                        break
 
-            for line in p_nalog_tekst.split('\n'):
-                m_paleta = re.search(r'^(.*?)\s+([\d\.,]+)(\d)\s+(EWP|FP|OWP)', line.strip())
-                if m_paleta:
-                    raw_oznaka = m_paleta.group(1).replace('Handelsware', '').strip()
-                    oznaka_broj = raw_oznaka if raw_oznaka else "Standardna pošiljka"
-                    
-                    masa_str = m_paleta.group(2).replace('.', '').replace(',', '.')
-                    kolicina = int(m_paleta.group(3))
-                    tip_palete = m_paleta.group(4)
-                    try:
-                        masa_kg = float(masa_str)
-                        for _ in range(kolicina):
-                            redci_paleta.append({
-                                'Oznaka_Broj': oznaka_broj,
-                                'Referenca_Sustav': trenutni_ref,
-                                'LA-ID': trenutni_shpt,
-                                'Datum_Naloga': trenutni_datum_naloga,
-                                'Datum_Isporuke': trenutni_datum_isporuke,
-                                'Grad': trenutni_grad,
-                                'ZIP': trenutni_zip,
-                                'Masa_Palete_KG': round(masa_kg, 2),
-                                'Tip_Palete': tip_palete
-                            })
-                    except:
-                        pass
+            m_isporuka = re.search(r'Datum isporuke:\s*(\d{2}\.\d{2}\.\d{4})', line_str)
+            if m_isporuka:
+                trenutni_datum_isporuke = m_isporuka.group(1)
+                
+            m_ref = re.search(r'Referenca:\s*([^\s]+)', line_str)
+            if m_ref:
+                trenutni_ref = m_ref.group(1)
+
+            m_paleta = re.search(r'^(.*?)\s+([\d\.,]+)(\d)\s+(EWP|FP|OWP)', line_str)
+            if m_paleta and trenutni_shpt:
+                raw_oznaka = m_paleta.group(1).replace('Handelsware', '').strip()
+                oznaka_broj = raw_oznaka if raw_oznaka else "Standardna pošiljka"
+                
+                masa_str = m_paleta.group(2).replace('.', '').replace(',', '.')
+                kolicina = int(m_paleta.group(3))
+                tip_palete = m_paleta.group(4)
+                try:
+                    masa_kg = float(masa_str)
+                    for _ in range(kolicina):
+                        redci_paleta.append({
+                            'Oznaka_Broj': oznaka_broj,
+                            'Referenca_Sustav': trenutni_ref,
+                            'LA-ID': trenutni_shpt,
+                            'Datum_Naloga': trenutni_datum_naloga,
+                            'Datum_Isporuke': trenutni_datum_isporuke,
+                            'Grad': trenutni_grad,
+                            'ZIP': trenutni_zip,
+                            'Masa_Palete_KG': round(masa_kg, 2),
+                            'Tip_Palete': tip_palete
+                        })
+                except:
+                    pass
+            i += 1
 
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju s pouzdanim parsiranjem primatelja"):
+        if st.button("Pokreni reviziju s ispravnim parsiranjem primatelja"):
             
             def odredi_zonu(row):
                 city = str(row.get('Grad', '')).strip().lower()
