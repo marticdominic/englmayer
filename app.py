@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s ispravnim čitanjem primatelja i zona isporuke.")
+st.markdown("Direktna analiza s preciznim parsiranjem isključivo bloka primatelja.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -69,7 +69,7 @@ if uploaded_pdf is not None:
                     m_amt = re.search(r'([\d\.,]+)\s*$', line)
                     if m_amt:
                         try:
-                            val = float(m_amt.group(1).replace('.', '').replace(',', '.'))
+                            val = float(m_amt.compr(...) if hasattr(m_amt, 'compr') else float(m_amt.group(1).replace('.', '').replace(',', '.'))
                             pdf_osnovna_iznosi[trenutni_ep] = round(pdf_osnovna_iznosi.get(trenutni_ep, 0.0) + val, 2)
                         except:
                             pass
@@ -83,7 +83,7 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. Robusno parsiranje detaljne specifikacije (isključivo Primatelj)
+        # 2. Ultra-precizno parsiranje: tražimo isključivo liniju "Primatelj" i čitamo grad/ZIP iz nje
         redci_paleta = []
         lines = pdf_tekst.split('\n')
         
@@ -103,25 +103,29 @@ if uploaded_pdf is not None:
                 trenutni_datum_naloga = m_nalog.group(1)
                 trenutni_shpt = m_nalog.group(3)
                 trenutni_ref = "N/A"
+                # Reset na zadano prije čitanja novog primatelja
                 trenutni_grad = "Zagreb"
                 trenutni_zip = 10000
             
-            # Fokusiramo se isključivo na redak koji počinje s "Primatelj"
+            # Detektiramo redak s primateljem i spajamo sve pripadajuće retke do datuma isporuke
             if line_str.startswith("Primatelj"):
-                primatelj_lines = [line_str]
+                primatelj_block = [line_str]
                 j = i + 1
-                # Čitamo redke sve do datuma isporuke ili oznake
                 while j < len(lines) and not any(k in lines[j] for k in ["Datum isporuke:", "Oznaka/Broj", "Referenca:", "Paritet:", "Suma"]):
-                    primatelj_lines.append(lines[j].strip())
+                    primatelj_block.append(lines[j].strip())
                     j += 1
                 
-                p_tekst = " ".join(primatelj_lines)
+                p_tekst = " ".join(primatelj_block)
                 
-                # Tražimo HR-ZIP i grad unutar primatelja (uzimamo zadnje pojavljivanje ili format HR-XXXXX Grad)
+                # Izlučujemo isključivo HR-ZIP i grad iz bloka primatelja
                 m_zip_grad = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', p_tekst)
                 if m_zip_grad:
                     trenutni_zip = int(m_zip_grad.group(1))
-                    trenutni_grad = m_zip_grad.group(2).strip()
+                    # Očišćeni naziv grada (uklanjamo eventualne suvišne sufikse ili brojeve telefona ako se potfešte)
+                    g_raw = m_zip_grad.group(2).strip()
+                    # Uzimamo prvu riječ ili čistu rečenicu grada do broja telefona
+                    g_clean = re.split(r'\d{3}', g_raw)[0].strip()
+                    trenutni_grad = g_clean if g_clean else g_raw
 
             m_isporuka = re.search(r'Datum isporuke:\s*(\d{2}\.\d{2}\.\d{4})', line_str)
             if m_isporuka:
@@ -160,7 +164,7 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju s točnim čitanjem primatelja"):
+        if st.button("Pokreni reviziju s točnim zoniranjem prema primatelju"):
             
             def odredi_zonu(row):
                 city = str(row.get('Grad', '')).strip().lower()
