@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza po paletama, točno zoniranje prema ugovoru, analitika rokova i usporedba pošiljaka.")
+st.markdown("Direktna analiza po paletama, točne ugovorne zone, oznake/reference pošiljaka, analitika rokova i usporedba.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -56,12 +56,12 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. Parsiranje detaljne specifikacije paleta, primatelja, gradova, ZIP-ova i masa
+        # 2. Parsiranje detaljne specifikacije paleta, primatelja, gradova, ZIP-ova, masa i referenci/oznaka
         redci_paleta = []
         trenutni_shpt = None
         trenutni_datum_naloga = None
         trenutni_datum_isporuke = None
-        trenutni_ref = None
+        trenutni_ref = "N/A"
         trenutni_primatelj = None
         trenutni_grad = "Zagreb"
         trenutni_zip = 10000
@@ -76,6 +76,7 @@ if uploaded_pdf is not None:
                 trenutni_primatelj = "N/A"
                 trenutni_grad = "Zagreb"
                 trenutni_zip = 10000
+                trenutni_ref = "N/A"
             
             if "Primatelj" in line_str:
                 trenutni_primatelj = line_str
@@ -88,7 +89,7 @@ if uploaded_pdf is not None:
             if m_isporuka:
                 trenutni_datum_isporuke = m_isporuka.group(1)
                 
-            m_ref = re.search(r'Referenca:\s*(\d+)', line_str)
+            m_ref = re.search(r'Referenca:\s*([^\s]+)', line_str)
             if m_ref:
                 trenutni_ref = m_ref.group(1)
 
@@ -102,7 +103,7 @@ if uploaded_pdf is not None:
                     for _ in range(kolicina):
                         redci_paleta.append({
                             'LA-ID': trenutni_shpt,
-                            'Referenca': trenutni_ref if trenutni_ref else "N/A",
+                            'Oznaka_Reference': trenutni_ref,
                             'Datum_Naloga': trenutni_datum_naloga,
                             'Datum_Isporuke': trenutni_datum_isporuke,
                             'Primatelj': trenutni_primatelj,
@@ -117,7 +118,7 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju po točnim ugovornim zonama"):
+        if st.button("Pokreni reviziju s ugrađenim oznakama i zonama"):
             
             # Točno zoniranje prema službenoj tablici iz ugovora
             def odredi_zonu(row):
@@ -125,11 +126,9 @@ if uploaded_pdf is not None:
                 zip_val = str(row.get('ZIP', '10000')).zfill(5)
                 prva_dva = int(zip_val[:2])
                 
-                # Zona 6: Makarska, Imotski, Ploče i ZIP koji počinje s 20
                 if any(g in city for g in ['makarska', 'imotski', 'ploče', 'metković', 'dubrovnik', 'korčula', 'mokosica']) or prva_dva == 20:
                     return "Zona 6"
                 
-                # Pravila prema službenoj tablici:
                 if prva_dva == 10:
                     return "Zona 1"
                 elif 40 <= prva_dva <= 49:
@@ -233,7 +232,7 @@ if uploaded_pdf is not None:
                 
                 st.markdown("---")
                 
-                cols_rok = ['LA-ID', 'Referenca', 'Datum_Naloga', 'Datum_Isporuke', 'Stvarni_Radni_Dani', 'Izracunata_Zona', 'Dopušteni_Rok_Radnih_Dana', 'Status_Roka', 'Grad']
+                cols_rok = ['LA-ID', 'Oznaka_Reference', 'Datum_Naloga', 'Datum_Isporuke', 'Stvarni_Radni_Dani', 'Izracunata_Zona', 'Dopušteni_Rok_Radnih_Dana', 'Status_Roka', 'Grad']
                 st.dataframe(df_palete[cols_rok])
                 st.download_button("📥 Preuzmi analitiku rokova (CSV)", konvertiraj_u_csv(df_palete[cols_rok]), "analitika_rokova_isporuke.csv", "text/csv")
                 
@@ -249,7 +248,7 @@ if uploaded_pdf is not None:
             with tab4:
                 st.subheader("Usporedba pošiljaka zbrojenih po referencama / LA-ID brojevima")
                 
-                df_posiljke = df_palete.groupby(['LA-ID', 'Referenca', 'Grad', 'Izracunata_Zona', 'Datum_Naloga', 'Datum_Isporuke']).agg(
+                df_posiljke = df_palete.groupby(['LA-ID', 'Oznaka_Reference', 'Grad', 'Izracunata_Zona', 'Datum_Naloga', 'Datum_Isporuke']).agg(
                     Broj_Paleta=('Masa_Palete_KG', 'count'),
                     Ukupna_Masa_KG=('Masa_Palete_KG', 'sum'),
                     Ugovoreno_Ukupno_EUR=('Ugovoreno_Paleta_Sa_Gorivom', 'sum')
