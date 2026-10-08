@@ -162,7 +162,6 @@ if uploaded_pdf is not None:
                             if c_key in HR_GRADOVI_ZIP:
                                 trenutni_zip = HR_GRADOVI_ZIP[c_key]
 
-            # DODATNA SIGURNOST: Ako ZIP i dalje nije nađen iz rječnika, tražimo ga iz primatelja u PDF-u (ignorišući 10410)
             if trenutni_zip == 0:
                 sve_pojave_zip = re.findall(r'HR-(\d{5})', p_nalog_tekst)
                 for z_val in sve_pojave_zip:
@@ -324,7 +323,7 @@ if uploaded_pdf is not None:
                     Datum_Isporuke=('Datum_Isporuke', 'max'),
                     Broj_Paleta=('Masa_Palete_KG', 'count'),
                     Ukupna_Masa_KG=('Masa_Palete_KG', 'sum'),
-                    Ugovoreno_Osnovna_EUR=('Ugovoreno_Osnovna_Ukupno', 'sum'),
+                    Ugovoreno_Osnovna_EUR=('Ugovorena_Osnovna_Ukupno', 'sum'),
                     Ugovoreno_Gorivo_EUR=('Ugovoreni_Iznos_Goriva', 'sum'),
                     Ugovoreno_Ukupno_EUR=('Ugovoreno_Paleta_Sa_Gorivom', 'sum')
                 ).reset_index()
