@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza po paletama s detaljnim Tabom 6 za raščlambu goriva i osnovne cijene dostave.")
+st.markdown("Direktna analiza sa skupnim financijskim pregledom komponenti goriva i dostave u Tabu 6.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -45,20 +45,17 @@ if uploaded_pdf is not None:
             if t:
                 pdf_tekst += t + "\n"
         
-        # 1. Ekstrakcija ukupnih iznosa i stavki iz PDF-a (Osnovna cijena + Gorivo po pošiljci)
+        # 1. Ekstrakcija ukupnih iznosa i stavki iz PDF-a
         pdf_iznosi = {}
         pdf_gorivo_iznosi = {}
         pdf_osnovna_iznosi = {}
         
-        # Pratimo pošiljku u tekstu da vidimo zasebne stavke (npr. prijevoz i dizel dodatak)
         trenutni_ep = None
         for line in pdf_tekst.split('\n'):
             m_ep = re.search(r'(EP-\d+)', line)
             if m_ep:
                 trenutni_ep = m_ep.group(1)
             
-            # Tražimo retke sa uslugama i iznosima
-            # Npr. "110 Roba ... 25% 232,00" ili "197 Dizel ... 25% 16,24"
             if trenutni_ep:
                 if any(kw in line for kw in ["Dizel", "dizel", "gorivo", "Gorivo"]):
                     m_amt = re.search(r'([\d\.,]+)\s*$', line)
@@ -163,7 +160,7 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju s novim izvještajem o gorivu i dostavi"):
+        if st.button("Pokreni reviziju sa skupnim izvještajem"):
             
             def odredi_zonu(row):
                 city = str(row.get('Grad', '')).strip().lower()
@@ -232,20 +229,18 @@ if uploaded_pdf is not None:
                 return round(baza, 2)
 
             df_palete['Ugovorena_Osnovna_Cijena'] = df_palete.apply(ugovorena_cijena_palete, axis=1)
-            
-            # Razdvajanje osnovne cijene i goriva po paleti
             df_palete['Ugovorena_Osnovna_Ukupno'] = df_palete['Ugovorena_Osnovna_Cijena']
             df_palete['Ugovoreni_Iznos_Goriva'] = round(df_palete['Ugovorena_Osnovna_Cijena'] * (dodatak_gorivo_pct / 100.0), 2)
             df_palete['Ugovoreno_Paleta_Sa_Gorivom'] = round(df_palete['Ugovorena_Osnovna_Cijena'] + df_palete['Ugovoreni_Iznos_Goriva'], 2)
 
-            # Tabovi izvještaja (uključujući novi Tab 6)
+            # Tabovi izvještaja
             tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
                 "1. Pregled po Paletama", 
                 "2. Provjera Rokova Isporuke (Analitika)", 
                 "3. Zbirni Financijski Pregled",
                 "4. Usporedba po Pošiljkama (Reference)",
                 "5. Preplate po Pošiljkama",
-                "6. Raščlamba Gorivo vs. Dostava"
+                "6. Skupna Raščlamba (Gorivo vs Dostava)"
             ])
             
             def konvertiraj_u_csv(data_frame):
@@ -306,24 +301,36 @@ if uploaded_pdf is not None:
                 else:
                     st.info("Pregledajte prvo tab 4 za izračun.")
 
-            # 6. Novi Tab: Raščlamba gorivo vs dostava
+            # 6. Skupni Tab: Ukupno gorivo vs dostava na razini cijelog računa
             with tab6:
-                st.subheader("Detaljna raščlamba: Naplaćeno vs. Ugovoreno za Osnovnu cijenu i Gorivo")
+                st.subheader("Skupni financijski pregled komponenti (Cijeli račun)")
                 if 'df_posiljke' in locals():
-                    df_komponente = df_posiljke.copy()
-                    df_komponente['Naplaćeno_Osnovna_EUR'] = df_komponente['LA-ID'].map(pdf_osnovna_iznosi).fillna(0.0)
-                    df_komponente['Naplaćeno_Gorivo_EUR'] = df_komponente['LA-ID'].map(pdf_gorivo_iznosi).fillna(0.0)
+                    tot_naplaceno_osnovna = sum(pdf_osnovna_iznosi.values())
+                    tot_ugovoreno_osnovna = df_posiljke['Ugovoreno_Osnovna_EUR'].sum()
                     
-                    df_komponente['Razlika_Osnovna (Napl - Ugov)'] = round(df_komponente['Naplaćeno_Osnovna_EUR'] - df_komponente['Ugovoreno_Osnovna_EUR'], 2)
-                    df_komponente['Razlika_Gorivo (Napl - Ugov)'] = round(df_komponente['Naplaćeno_Gorivo_EUR'] - df_komponente['Ugovoreno_Gorivo_EUR'], 2)
+                    tot_naplaceno_gorivo = sum(pdf_gorivo_iznosi.values())
+                    tot_ugovoreno_gorivo = df_posiljke['Ugovoreno_Gorivo_EUR'].sum()
                     
-                    cols_komp = [
-                        'LA-ID', 'Oznaka_Broj', 'Grad', 'Izracunata_Zona', 
-                        'Naplaćeno_Osnovna_EUR', 'Ugovoreno_Osnovna_EUR', 'Razlika_Osnovna (Napl - Ugov)',
-                        'Naplaćeno_Gorivo_EUR', 'Ugovoreno_Gorivo_EUR', 'Razlika_Gorivo (Napl - Ugov)'
-                    ]
-                    st.dataframe(df_komponente[cols_komp])
-                    st.download_button("📥 Preuzmi raščlambu po komponentama (CSV)", konvertiraj_u_csv(df_komponente[cols_komp]), "rasclamba_gorivo_dostava.csv", "text/csv")
+                    skupni_podaci = [{
+                        'Komponenta': 'Osnovna cijena prijevoza (Dostava)',
+                        'Naplaćeno ukupno (€)': round(tot_naplaceno_osnovna, 2),
+                        'Ugovoreno ukupno (€)': round(tot_ugovoreno_osnovna, 2),
+                        'Razlika (Naplaćeno - Ugovoreno) (€)': round(tot_naplaceno_osnovna - tot_ugovoreno_osnovna, 2)
+                    }, {
+                        'Komponenta': 'Dizel dodatak (Gorivo)',
+                        'Naplaćeno ukupno (€)': round(tot_naplaceno_gorivo, 2),
+                        'Ugovoreno ukupno (€)': round(tot_ugovoreno_gorivo, 2),
+                        'Razlika (Naplaćeno - Ugovoreno) (€)': round(tot_naplaceno_gorivo - tot_ugovoreno_gorivo, 2)
+                    }, {
+                        'Komponenta': 'UKUPNO SVEUKUPNO',
+                        'Naplaćeno ukupno (€)': round(tot_naplaceno_osnovna + tot_naplaceno_gorivo, 2),
+                        'Ugovoreno ukupno (€)': round(tot_ugovoreno_osnovna + tot_ugovoreno_gorivo, 2),
+                        'Razlika (Naplaćeno - Ugovoreno) (€)': round((tot_naplaceno_osnovna + tot_naplaceno_gorivo) - (tot_ugovoreno_osnovna + tot_ugovoreno_gorivo), 2)
+                    }]
+                    
+                    df_skupno = pd.DataFrame(skupni_podaci)
+                    st.table(df_skupno)
+                    st.download_button("📥 Preuzmi skupnu rekapitulaciju (CSV)", konvertiraj_u_csv(df_skupno), "skupna_rasclamba_gorivo_dostava.csv", "text/csv")
                 else:
                     st.info("Pregledajte prvo tab 4 za izračun.")
 
