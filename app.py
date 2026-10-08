@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza po paletama s automatskim višim zaokruživanjem dodatka za gorivo, ispravnim zonama i primateljima.")
+st.markdown("Direktna analiza po paletama s ispravnim zbirnim grupiranjem pošiljaka po LA-ID broju.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -136,7 +136,7 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju s korigiranim gorivom i zonama"):
+        if st.button("Pokreni reviziju s ispravnim zbirnim pregledom pošiljaka"):
             
             # Točno zoniranje prema službenoj tablici iz ugovora
             def odredi_zonu(row):
@@ -262,11 +262,13 @@ if uploaded_pdf is not None:
                 c1.metric("Ukupno paleta u PDF-u", f"{len(df_palete)}")
                 c2.metric("Ukupno po službenom ugovornom cjeniku", f"{ukupno_ugovor:,.2f} €")
                 
-            # 4. Usporedba po pošiljkama (Reference)
+            # 4. Usporedba po pošiljkama (Grupisano isključivo po LA-ID i Oznaka_Broj da se izbjegnu dupli redci)
             with tab4:
-                st.subheader("Usporedba pošiljaka zbrojenih po referencama / LA-ID brojevima")
+                st.subheader("Usporedba pošiljaka zbrojenih po LA-ID brojevima")
                 
-                df_posiljke = df_palete.groupby(['Oznaka_Broj', 'LA-ID', 'Grad', 'ZIP', 'Izracunata_Zona', 'Datum_Naloga', 'Datum_Isporuke']).agg(
+                df_posiljke = df_palete.groupby(['LA-ID', 'Oznaka_Broj', 'Grad', 'ZIP', 'Izracunata_Zona']).agg(
+                    Datum_Naloga=('Datum_Naloga', 'first'),
+                    Datum_Isporuke=('Datum_Isporuke', 'max'),
                     Broj_Paleta=('Masa_Palete_KG', 'count'),
                     Ukupna_Masa_KG=('Masa_Palete_KG', 'sum'),
                     Ugovoreno_Ukupno_EUR=('Ugovoreno_Paleta_Sa_Gorivom', 'sum')
