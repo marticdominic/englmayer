@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s automatskim mapiranjem gradova i ispravnim dodjeljivanjem zona.")
+st.markdown("Direktna analiza s pouzdanim parsiranjem odredišta i zona.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -83,15 +83,20 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. Pouzdano parsiranje pošiljaka s mapiranjem gradova i ZIP-ova
+        # 2. Precizno parsiranje pošiljaka s fiksiranjem gradova i ZIP-ova
         redci_paleta = []
         blokovi_naloga = re.split(r'(Datum naloga:\s*\d{2}\.\d{2}\.\d{4}\.)', pdf_tekst)
         
-        # Poznate mapiranje gradova na ZIP ako zatreba
-        grad_u_zip = {
-            'đakovo': 31400, 'osijek': 31000, 'rijeka': 51000, 'split': 21000,
-            'zadar': 23000, 'pula': 52100, 'slavonski': 35000, 'varaždin': 42000,
-            'zadar': 23000, 'dubrovnik': 20000, 'pula': 52100
+        baza_gradova = {
+            'đakovo': (31400, 'Đakovo'),
+            'osijek': (31000, 'Osijek'),
+            'rijeka': (51000, 'Rijeka'),
+            'split': (21000, 'Split'),
+            'zadar': (23000, 'Zadar'),
+            'pula': (52100, 'Pula'),
+            'slavonski': (35000, 'Slavonski Brod'),
+            'varaždin': (42000, 'Varaždin'),
+            'dubrovnik': (20000, 'Dubrovnik')
         }
 
         for b_idx in range(1, len(blokovi_naloga), 2):
@@ -116,27 +121,32 @@ if uploaded_pdf is not None:
             trenutni_grad = "Zagreb"
             trenutni_zip = 10000
             
-            # Provjera pariteta za mjesto istovara
-            m_paritet = re.search(r'Paritet:.*?istovareno\s+([A-Za-zČĆŠĐŽčćšđž\s]+)', p_nalog_tekst)
-            if m_paritet:
-                g_par = m_paritet.group(1).strip().split()[0]
-                if g_par and g_par.lower() != "zagreb":
-                    trenutni_grad = g_par
-
-            # Traženje ispravnog ZIP-a (ignoriše 10410)
-            sve_pojave_zip = re.findall(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', p_nalog_tekst)
-            for z_val, g_val in sve_pojave_zip:
-                if z_val != "10410":
-                    trenutni_zip = int(z_val)
-                    g_clean = re.split(r'[\r\n\d/]', g_val)[0].strip()
-                    if g_clean:
-                        trenutni_grad = g_clean
+            # Provjera ključnih riječi gradova u cijelom bloku naloga
+            p_lower = p_nalog_tekst.lower()
+            pronadjen_grad = False
+            for kljuc, (z_val, g_naziv) in baza_gradova.items():
+                if kljuc in p_lower:
+                    trenutni_grad = g_naziv
+                    trenutni_zip = z_val
+                    pronadjen_grad = True
                     break
-
-            # Ako je grad prepoznat ali je ZIP ostao 10000, povuci iz rječnika
-            g_lower = trenutni_grad.lower()
-            if trenutni_zip == 10000 and g_lower in grad_u_zip:
-                trenutni_zip = grad_u_zip[g_lower]
+            
+            if not pronadjen_grad:
+                # Ako nema u bazi, tražimo paritet ili HR-ZIP koji nije pošiljatelj
+                m_paritet = re.search(r'istovareno\s+([A-Za-zČĆŠĐŽčćšđž]+)', p_nalog_tekst, re.IGNORECASE)
+                if m_paritet:
+                    c = m_paritet.group(1).strip()
+                    if c.lower() not in ["na", "mjesto", "dpu", "zagreb"]:
+                        trenutni_grad = c
+                
+                sve_pojave_zip = re.findall(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', p_nalog_tekst)
+                for z_val, g_val in sve_pojave_zip:
+                    if z_val != "10410":
+                        trenutni_zip = int(z_val)
+                        g_clean = re.split(r'[\r\n\d/]', g_val)[0].strip()
+                        if g_clean:
+                            trenutni_grad = g_clean
+                        break
 
             for line in p_nalog_tekst.split('\n'):
                 m_paleta = re.search(r'^(.*?)\s+([\d\.,]+)(\d)\s+(EWP|FP|OWP)', line.strip())
