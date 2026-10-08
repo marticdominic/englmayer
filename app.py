@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s robusnim parsiranjem primatelja i ispravnim zoniranjem.")
+st.markdown("Direktna analiza s poboljšanim prepoznavanjem primatelja i gradova isporuke.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -83,7 +83,7 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. Robusno parsiranje blokova pošiljaka s fokusom isključivo na primatelja
+        # 2. Inteligentno parsiranje pošiljaka s direktnim traženjem primatelja i odredišta
         redci_paleta = []
         blokovi_naloga = re.split(r'(Datum naloga:\s*\d{2}\.\d{2}\.\d{4}\.)', pdf_tekst)
         
@@ -106,21 +106,30 @@ if uploaded_pdf is not None:
             m_isporuka = re.search(r'Datum isporuke:\s*(\d{2}\.\d{2}\.\d{4})', p_nalog_tekst)
             trenutni_datum_isporuke = m_isporuka.group(1) if m_isporuka else None
 
-            # Pronalaženje primatelja i njegovog ZIP-a/grada s cijelog bloka od "Primatelj" do "Oznaka/Broj"
-            trenutni_grad = "Nepoznato"
+            # Određivanje grada i ZIP-a: Prvo provjeravamo redak "Primatelj", a ako ga nema, tražimo u paritetu ili cijelom bloku
+            trenutni_grad = "Zagreb"
             trenutni_zip = 10000
             
+            # Tražimo dio teksta nakon riječi "Primatelj"
             if "Primatelj" in p_nalog_tekst:
-                primatelj_dio = p_nalog_tekst.split("Primatelj")[1]
-                primatelj_dio = primatelj_dio.split("Oznaka/Broj")[0] if "Oznaka/Broj" in primatelj_dio else primatelj_dio
+                p_dio = p_nalog_tekst.split("Primatelj")[1]
+                p_dio = p_dio.split("Oznaka/Broj")[0] if "Oznaka/Broj" in p_dio else p_dio
                 
-                # Tražimo HR-ZIP u tom dijelu bez obzira na prijelome redaka
-                m_zip_grad = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', primatelj_dio)
-                if m_zip_grad:
-                    trenutni_zip = int(m_zip_grad.group(1))
-                    g_raw = m_zip_grad.group(2).strip()
-                    g_clean = re.split(r'[\r\n\d]', g_raw)[0].strip()
-                    trenutni_grad = g_clean if g_clean else g_raw
+                # Tražimo HR-XXXXX i pripadajući grad
+                m_z = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', p_dio)
+                if m_z:
+                    trenutni_zip = int(m_z.group(1))
+                    g_raw = m_z.group(2).strip()
+                    trenutni_grad = re.split(r'[\r\n\d]', g_raw)[0].strip()
+            
+            # Fallback: Ako nije našlo unutar primatelja, tražimo bilo gdje u tekstu naloga HR-ZIP koji nije pošiljateljev (10410)
+            if trenutni_zip == 10000 or trenutni_grad == "Zagreb":
+                sve_pojave = re.findall(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', p_nalog_tekst)
+                for z_val, g_val in sve_pojave:
+                    if z_val != "10410": # Ignoriramo Makromikro (Velika Gorica 10410)
+                        trenutni_zip = int(z_val)
+                        trenutni_grad = re.split(r'[\r\n\d]', g_val)[0].strip()
+                        break
 
             for line in p_nalog_tekst.split('\n'):
                 m_paleta = re.search(r'^(.*?)\s+([\d\.,]+)(\d)\s+(EWP|FP|OWP)', line.strip())
@@ -151,7 +160,7 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju s točnim zoniranjem prema primatelju"):
+        if st.button("Pokreni reviziju s pouzdanim parsiranjem primatelja"):
             
             def odredi_zonu(row):
                 city = str(row.get('Grad', '')).strip().lower()
