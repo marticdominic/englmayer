@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s preciznim izdvajanjem primatelja i ispravnim zoniranjem.")
+st.markdown("Direktna analiza s robusnim parsiranjem primatelja i ispravnim zoniranjem.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -83,10 +83,8 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. Inteligentno parsiranje blokova pošiljaka s fokusom isključivo na primatelja
+        # 2. Robusno parsiranje blokova pošiljaka s fokusom isključivo na primatelja
         redci_paleta = []
-        
-        # Dijelimo cijeli PDF tekst po nalogu / pošiljci
         blokovi_naloga = re.split(r'(Datum naloga:\s*\d{2}\.\d{2}\.\d{4}\.)', pdf_tekst)
         
         for b_idx in range(1, len(blokovi_naloga), 2):
@@ -95,7 +93,6 @@ if uploaded_pdf is not None:
             
             p_nalog_tekst = b_meta + b_sadrzaj
             
-            # Izvlačenje osnovnih ID-eva
             m_meta_info = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4}\.)\s*Pošiljka:\s*([^\s]+)\s*LA-ID:\s*(EP-\d+)', p_nalog_tekst)
             if not m_meta_info:
                 continue
@@ -103,32 +100,28 @@ if uploaded_pdf is not None:
             trenutni_datum_naloga = m_meta_info.group(1)
             trenutni_shpt = m_meta_info.group(3)
             
-            # Referenca
             m_ref = re.search(r'Referenca:\s*([^\s]+)', p_nalog_tekst)
             trenutni_ref = m_ref.group(1) if m_ref else "N/A"
             
-            # Datum isporuke
             m_isporuka = re.search(r'Datum isporuke:\s*(\d{2}\.\d{2}\.\d{4})', p_nalog_tekst)
             trenutni_datum_isporuke = m_isporuka.group(1) if m_isporuka else None
 
-            # KLJUČNO: Izrezujemo isključivo dio od riječi "Primatelj" nadalje (ignorišemo pošiljatelja)
-            trenutni_grad = "Zagreb"
+            # Pronalaženje primatelja i njegovog ZIP-a/grada s cijelog bloka od "Primatelj" do "Oznaka/Broj"
+            trenutni_grad = "Nepoznato"
             trenutni_zip = 10000
             
             if "Primatelj" in p_nalog_tekst:
                 primatelj_dio = p_nalog_tekst.split("Primatelj")[1]
-                # Ograničavamo do datuma isporuke ili oznake
-                primatelj_dio = re.split(r'Datum isporuke|Oznaka/Broj', primatelj_dio)[0]
+                primatelj_dio = primatelj_dio.split("Oznaka/Broj")[0] if "Oznaka/Broj" in primatelj_dio else primatelj_dio
                 
-                # Tražimo HR-ZIP i grad u tom dijelu
+                # Tražimo HR-ZIP u tom dijelu bez obzira na prijelome redaka
                 m_zip_grad = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', primatelj_dio)
                 if m_zip_grad:
                     trenutni_zip = int(m_zip_grad.group(1))
                     g_raw = m_zip_grad.group(2).strip()
-                    g_clean = re.split(r'\d{3}', g_raw)[0].strip()
+                    g_clean = re.split(r'[\r\n\d]', g_raw)[0].strip()
                     trenutni_grad = g_clean if g_clean else g_raw
 
-            # Ekstrakcija paleta/stavki unutar ovog naloga
             for line in p_nalog_tekst.split('\n'):
                 m_paleta = re.search(r'^(.*?)\s+([\d\.,]+)(\d)\s+(EWP|FP|OWP)', line.strip())
                 if m_paleta:
@@ -158,7 +151,7 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju s preciznim čitcanjem primatelja"):
+        if st.button("Pokreni reviziju s točnim zoniranjem prema primatelju"):
             
             def odredi_zonu(row):
                 city = str(row.get('Grad', '')).strip().lower()
