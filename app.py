@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza sa skupnim financijskim pregledom komponenti goriva i dostave u Tabu 6.")
+st.markdown("Direktna analiza sa zaokruživanjem svih iznosa na dvije decimale.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -62,7 +62,7 @@ if uploaded_pdf is not None:
                     if m_amt:
                         try:
                             val = float(m_amt.group(1).replace('.', '').replace(',', '.'))
-                            pdf_gorivo_iznosi[trenutni_ep] = pdf_gorivo_iznosi.get(trenutni_ep, 0.0) + val
+                            pdf_gorivo_iznosi[trenutni_ep] = round(pdf_gorivo_iznosi.get(trenutni_ep, 0.0) + val, 2)
                         except:
                             pass
                 elif any(kw in line for kw in ["Roba", "roba", "prijevoz", "Prijevoz", "zona", "Zona"]):
@@ -70,7 +70,7 @@ if uploaded_pdf is not None:
                     if m_amt:
                         try:
                             val = float(m_amt.group(1).replace('.', '').replace(',', '.'))
-                            pdf_osnovna_iznosi[trenutni_ep] = pdf_osnovna_iznosi.get(trenutni_ep, 0.0) + val
+                            pdf_osnovna_iznosi[trenutni_ep] = round(pdf_osnovna_iznosi.get(trenutni_ep, 0.0) + val, 2)
                         except:
                             pass
 
@@ -79,7 +79,7 @@ if uploaded_pdf is not None:
                 shpt_id = match.group(1)
                 amount_str = match.group(5).replace('.', '').replace(',', '.')
                 try:
-                    pdf_iznosi[shpt_id] = float(amount_str)
+                    pdf_iznosi[shpt_id] = round(float(amount_str), 2)
                 except:
                     pass
 
@@ -150,7 +150,7 @@ if uploaded_pdf is not None:
                             'Primatelj_Blok': trenutni_primatelj_raw,
                             'Grad': trenutni_grad,
                             'ZIP': trenutni_zip,
-                            'Masa_Palete_KG': masa_kg,
+                            'Masa_Palete_KG': round(masa_kg, 2),
                             'Tip_Palete': tip_palete
                         })
                 except:
@@ -160,7 +160,7 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju sa skupnim izvještajem"):
+        if st.button("Pokreni reviziju sa zaokruživanjem na 2 decimale"):
             
             def odredi_zonu(row):
                 city = str(row.get('Grad', '')).strip().lower()
@@ -229,7 +229,7 @@ if uploaded_pdf is not None:
                 return round(baza, 2)
 
             df_palete['Ugovorena_Osnovna_Cijena'] = df_palete.apply(ugovorena_cijena_palete, axis=1)
-            df_palete['Ugovorena_Osnovna_Ukupno'] = df_palete['Ugovorena_Osnovna_Cijena']
+            df_palete['Ugovorena_Osnovna_Ukupno'] = round(df_palete['Ugovorena_Osnovna_Cijena'], 2)
             df_palete['Ugovoreni_Iznos_Goriva'] = round(df_palete['Ugovorena_Osnovna_Cijena'] * (dodatak_gorivo_pct / 100.0), 2)
             df_palete['Ugovoreno_Paleta_Sa_Gorivom'] = round(df_palete['Ugovorena_Osnovna_Cijena'] + df_palete['Ugovoreni_Iznos_Goriva'], 2)
 
@@ -248,7 +248,13 @@ if uploaded_pdf is not None:
 
             with tab1:
                 st.subheader(f"Popis svih paleta izvađenih iz PDF-a ({len(df_palete)} stavki)")
-                st.dataframe(df_palete)
+                st.dataframe(df_palete.style.format({
+                    'Masa_Palete_KG': '{:.2f}',
+                    'Ugovorena_Osnovna_Cijena': '{:.2f}',
+                    'Ugovorena_Osnovna_Ukupno': '{:.2f}',
+                    'Ugovoreni_Iznos_Goriva': '{:.2f}',
+                    'Ugovoreno_Paleta_Sa_Gorivom': '{:.2f}'
+                }))
                 st.download_button("📥 Preuzmi palete (CSV)", konvertiraj_u_csv(df_palete), "palete_iz_pdf-a.csv", "text/csv")
             
             with tab2:
@@ -260,8 +266,8 @@ if uploaded_pdf is not None:
                 pct_izvan_rok = (broj_izvan_rok / ukupno_stavki) * 100 if ukupno_stavki > 0 else 0
                 
                 kpi1, kpi2, kpi3 = st.columns(3)
-                kpi1.metric("U roku (Uspješnost)", f"{pct_u_roku:.1f}%", f"{broj_u_roku} paleta")
-                kpi2.metric("Izvan roka (Kašnjenje)", f"{pct_izvan_rok:.1f}%", f"{broj_izvan_rok} paleta")
+                kpi1.metric("U roku (Uspješnost)", f"{pct_u_roku:.2f}%", f"{broj_u_roku} paleta")
+                kpi2.metric("Izvan roka (Kašnjenje)", f"{pct_izvan_rok:.2f}%", f"{broj_izvan_rok} paleta")
                 kpi3.metric("Ukupno analizirano", f"{ukupno_stavki} paleta")
                 st.markdown("---")
                 cols_rok = ['Oznaka_Broj', 'LA-ID', 'Grad', 'ZIP', 'Izracunata_Zona', 'Datum_Naloga', 'Datum_Isporuke', 'Stvarni_Radni_Dani', 'Dopušteni_Rok_Radnih_Dana', 'Status_Roka']
@@ -270,7 +276,7 @@ if uploaded_pdf is not None:
                 
             with tab3:
                 st.subheader("Zbirna rekapitulacija po ugovoru")
-                ukupno_ugovor = df_palete['Ugovoreno_Paleta_Sa_Gorivom'].sum()
+                ukupno_ugovor = round(df_palete['Ugovoreno_Paleta_Sa_Gorivom'].sum(), 2)
                 c1, c2 = st.columns(2)
                 c1.metric("Ukupno paleta u PDF-u", f"{len(df_palete)}")
                 c2.metric("Ukupno po službenom ugovornom cjeniku", f"{ukupno_ugovor:,.2f} €")
@@ -287,16 +293,36 @@ if uploaded_pdf is not None:
                     Ugovoreno_Ukupno_EUR=('Ugovoreno_Paleta_Sa_Gorivom', 'sum')
                 ).reset_index()
                 
-                df_posiljke['Naplaćeno_Po_PDF_EUR'] = df_posiljke['LA-ID'].map(pdf_iznosi).fillna(0.0)
+                df_posiljke['Ukupna_Masa_KG'] = df_posiljke['Ukupna_Masa_KG'].round(2)
+                df_posiljke['Ugovoreno_Osnovna_EUR'] = df_posiljke['Ugovoreno_Osnovna_EUR'].round(2)
+                df_posiljke['Ugovoreno_Gorivo_EUR'] = df_posiljke['Ugovoreno_Gorivo_EUR'].round(2)
+                df_posiljke['Ugovoreno_Ukupno_EUR'] = df_posiljke['Ugovoreno_Ukupno_EUR'].round(2)
+                
+                df_posiljke['Naplaćeno_Po_PDF_EUR'] = df_posiljke['LA-ID'].map(pdf_iznosi).fillna(0.0).round(2)
                 df_posiljke['Razlika (Naplaćeno - Ugovoreno)'] = round(df_posiljke['Naplaćeno_Po_PDF_EUR'] - df_posiljke['Ugovoreno_Ukupno_EUR'], 2)
-                st.dataframe(df_posiljke)
+                
+                st.dataframe(df_posiljke.style.format({
+                    'Ukupna_Masa_KG': '{:.2f}',
+                    'Ugovoreno_Osnovna_EUR': '{:.2f}',
+                    'Ugovoreno_Gorivo_EUR': '{:.2f}',
+                    'Ugovoreno_Ukupno_EUR': '{:.2f}',
+                    'Naplaćeno_Po_PDF_EUR': '{:.2f}',
+                    'Razlika (Naplaćeno - Ugovoreno)': '{:.2f}'
+                }))
                 st.download_button("📥 Preuzmi usporedbu pošiljaka (CSV)", konvertiraj_u_csv(df_posiljke), "usporedba_po_posiljkama.csv", "text/csv")
 
             with tab5:
                 st.subheader("Izdvojene preplate (gdje je naplaćeni iznos veći od ugovornog)")
                 if 'df_posiljke' in locals():
                     df_preplate = df_posiljke[df_posiljke['Razlika (Naplaćeno - Ugovoreno)'] > 0].sort_values(by='Razlika (Naplaćeno - Ugovoreno)', ascending=False)
-                    st.dataframe(df_preplate)
+                    st.dataframe(df_preplate.style.format({
+                        'Ukupna_Masa_KG': '{:.2f}',
+                        'Ugovoreno_Osnovna_EUR': '{:.2f}',
+                        'Ugovoreno_Gorivo_EUR': '{:.2f}',
+                        'Ugovoreno_Ukupno_EUR': '{:.2f}',
+                        'Naplaćeno_Po_PDF_EUR': '{:.2f}',
+                        'Razlika (Naplaćeno - Ugovoreno)': '{:.2f}'
+                    }))
                     st.download_button("📥 Preuzmi preplate po pošiljkama (CSV)", konvertiraj_u_csv(df_preplate), "preplate_po_posiljkama.csv", "text/csv")
                 else:
                     st.info("Pregledajte prvo tab 4 za izračun.")
@@ -305,21 +331,21 @@ if uploaded_pdf is not None:
             with tab6:
                 st.subheader("Skupni financijski pregled komponenti (Cijeli račun)")
                 if 'df_posiljke' in locals():
-                    tot_naplaceno_osnovna = sum(pdf_osnovna_iznosi.values())
-                    tot_ugovoreno_osnovna = df_posiljke['Ugovoreno_Osnovna_EUR'].sum()
+                    tot_naplaceno_osnovna = round(sum(pdf_osnovna_iznosi.values()), 2)
+                    tot_ugovoreno_osnovna = round(df_posiljke['Ugovoreno_Osnovna_EUR'].sum(), 2)
                     
-                    tot_naplaceno_gorivo = sum(pdf_gorivo_iznosi.values())
-                    tot_ugovoreno_gorivo = df_posiljke['Ugovoreno_Gorivo_EUR'].sum()
+                    tot_naplaceno_gorivo = round(sum(pdf_gorivo_iznosi.values()), 2)
+                    tot_ugovoreno_gorivo = round(df_posiljke['Ugovoreno_Gorivo_EUR'].sum(), 2)
                     
                     skupni_podaci = [{
                         'Komponenta': 'Osnovna cijena prijevoza (Dostava)',
-                        'Naplaćeno ukupno (€)': round(tot_naplaceno_osnovna, 2),
-                        'Ugovoreno ukupno (€)': round(tot_ugovoreno_osnovna, 2),
+                        'Naplaćeno ukupno (€)': tot_naplaceno_osnovna,
+                        'Ugovoreno ukupno (€)': tot_ugovoreno_osnovna,
                         'Razlika (Naplaćeno - Ugovoreno) (€)': round(tot_naplaceno_osnovna - tot_ugovoreno_osnovna, 2)
                     }, {
                         'Komponenta': 'Dizel dodatak (Gorivo)',
-                        'Naplaćeno ukupno (€)': round(tot_naplaceno_gorivo, 2),
-                        'Ugovoreno ukupno (€)': round(tot_ugovoreno_gorivo, 2),
+                        'Naplaćeno ukupno (€)': tot_naplaceno_gorivo,
+                        'Ugovoreno ukupno (€)': tot_ugovoreno_gorivo,
                         'Razlika (Naplaćeno - Ugovoreno) (€)': round(tot_naplaceno_gorivo - tot_ugovoreno_gorivo, 2)
                     }, {
                         'Komponenta': 'UKUPNO SVEUKUPNO',
@@ -329,7 +355,11 @@ if uploaded_pdf is not None:
                     }]
                     
                     df_skupno = pd.DataFrame(skupni_podaci)
-                    st.table(df_skupno)
+                    st.table(df_skupno.style.format({
+                        'Naplaćeno ukupno (€)': '{:.2f}',
+                        'Ugovoreno ukupno (€)': '{:.2f}',
+                        'Razlika (Naplaćeno - Ugovoreno) (€)': '{:.2f}'
+                    }))
                     st.download_button("📥 Preuzmi skupnu rekapitulaciju (CSV)", konvertiraj_u_csv(df_skupno), "skupna_rasclamba_gorivo_dostava.csv", "text/csv")
                 else:
                     st.info("Pregledajte prvo tab 4 za izračun.")
