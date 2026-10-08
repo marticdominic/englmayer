@@ -26,8 +26,8 @@ HR_GRADOVI_ZIP = {
     'makarska': 21300, 'metković': 20350, 'imotski': 21260, 'ploče': 20340,
     'korčula': 20260, 'zaprešić': 10290, 'sveta nedelja': 10431, 'belišće': 31551,
     'valpovo': 31550, 'našice': 31500, 'crikvenica': 51260, 'poreč': 52440,
-    'umag': 52470, 'labin': 52220, 'pazin': 52000, 'Senj': 53270, 'gospić': 53000,
-    'ogulin': 47300, 'Dugo Selo': 10370, 'vrbovec': 10340, 'jastrebarsko': 10450
+    'umag': 52470, 'labin': 52220, 'pazin': 52000, 'senj': 53270, 'gospić': 53000,
+    'ogulin': 47300, 'dugo selo': 10370, 'vrbovec': 10340, 'jastrebarsko': 10450
 }
 
 # Sidebar - Parametri obračuna
@@ -132,16 +132,14 @@ if uploaded_pdf is not None:
                     break
             
             if not paritet_linija:
-                # Ako nema eksplicitno riječi Paritet, tražimo bilo gdje riječ istovareno
                 for line in p_nalog_tekst.split('\n'):
                     if "istovareno" in line.lower():
                         paritet_linija = line.lower()
                         break
 
-            # Pametno traženje grada iz rječnika unutar linije pariteta
             p_tekst_ciyi = paritet_linija if paritet_linija else p_nalog_tekst.lower()
             
-             pronadeno = False
+            pronadeno = False
             for grad_naziv, z_broj in HR_GRADOVI_ZIP.items():
                 if grad_naziv in p_tekst_ciyi:
                     trenutni_grad = grad_naziv.capitalize()
@@ -150,7 +148,6 @@ if uploaded_pdf is not None:
                     break
             
             if not pronadeno and paritet_linija:
-                # Ako grad nije u rječniku, uzmi prvu riječ nakon istovareno
                 dio_nakon = re.split(r'istovareno', paritet_linija, flags=re.IGNORECASE)
                 if len(dio_nakon) > 1:
                     c_kandidat = dio_nakon[1].strip().split()
