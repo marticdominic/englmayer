@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza sa zaokruživanjem svih iznosa na dvije decimale.")
+st.markdown("Direktna analiza s prilagođenim CSV izvozom za Excel (ispravan prikaz decimala bez pretvaranja u datume).")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -160,7 +160,7 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju sa zaokruživanjem na 2 decimale"):
+        if st.button("Pokreni reviziju s ispravnim Excel formatom brojeva"):
             
             def odredi_zonu(row):
                 city = str(row.get('Grad', '')).strip().lower()
@@ -243,19 +243,17 @@ if uploaded_pdf is not None:
                 "6. Skupna Raščlamba (Gorivo vs Dostava)"
             ])
             
-            def konvertiraj_u_csv(data_frame):
-                return data_frame.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+            # Pomoćna funkcija za CSV izvoz prilagođen Excelu (zamjena točke zarezom za decimale)
+            def konvertiraj_u_excel_csv(data_frame):
+                df_export = data_frame.copy()
+                for col in df_export.select_dtypes(include=['float64', 'float32', 'int64']):
+                    df_export[col] = df_export[col].astype(str).str.replace('.', ',', regex=False)
+                return df_export.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
 
             with tab1:
                 st.subheader(f"Popis svih paleta izvađenih iz PDF-a ({len(df_palete)} stavki)")
-                st.dataframe(df_palete.style.format({
-                    'Masa_Palete_KG': '{:.2f}',
-                    'Ugovorena_Osnovna_Cijena': '{:.2f}',
-                    'Ugovorena_Osnovna_Ukupno': '{:.2f}',
-                    'Ugovoreni_Iznos_Goriva': '{:.2f}',
-                    'Ugovoreno_Paleta_Sa_Gorivom': '{:.2f}'
-                }))
-                st.download_button("📥 Preuzmi palete (CSV)", konvertiraj_u_csv(df_palete), "palete_iz_pdf-a.csv", "text/csv")
+                st.dataframe(df_palete)
+                st.download_button("📥 Preuzmi palete (CSV za Excel)", konvertiraj_u_excel_csv(df_palete), "palete_iz_pdf-a.csv", "text/csv")
             
             with tab2:
                 st.subheader("Analitički izvještaj: Učinkovitost i točnost rokova dostave")
@@ -272,7 +270,7 @@ if uploaded_pdf is not None:
                 st.markdown("---")
                 cols_rok = ['Oznaka_Broj', 'LA-ID', 'Grad', 'ZIP', 'Izracunata_Zona', 'Datum_Naloga', 'Datum_Isporuke', 'Stvarni_Radni_Dani', 'Dopušteni_Rok_Radnih_Dana', 'Status_Roka']
                 st.dataframe(df_palete[cols_rok])
-                st.download_button("📥 Preuzmi analitiku rokova (CSV)", konvertiraj_u_csv(df_palete[cols_rok]), "analitika_rokova_isporuke.csv", "text/csv")
+                st.download_button("📥 Preuzmi analitiku rokova (CSV za Excel)", konvertiraj_u_excel_csv(df_palete[cols_rok]), "analitika_rokova_isporuke.csv", "text/csv")
                 
             with tab3:
                 st.subheader("Zbirna rekapitulacija po ugovoru")
@@ -301,29 +299,15 @@ if uploaded_pdf is not None:
                 df_posiljke['Naplaćeno_Po_PDF_EUR'] = df_posiljke['LA-ID'].map(pdf_iznosi).fillna(0.0).round(2)
                 df_posiljke['Razlika (Naplaćeno - Ugovoreno)'] = round(df_posiljke['Naplaćeno_Po_PDF_EUR'] - df_posiljke['Ugovoreno_Ukupno_EUR'], 2)
                 
-                st.dataframe(df_posiljke.style.format({
-                    'Ukupna_Masa_KG': '{:.2f}',
-                    'Ugovoreno_Osnovna_EUR': '{:.2f}',
-                    'Ugovoreno_Gorivo_EUR': '{:.2f}',
-                    'Ugovoreno_Ukupno_EUR': '{:.2f}',
-                    'Naplaćeno_Po_PDF_EUR': '{:.2f}',
-                    'Razlika (Naplaćeno - Ugovoreno)': '{:.2f}'
-                }))
-                st.download_button("📥 Preuzmi usporedbu pošiljaka (CSV)", konvertiraj_u_csv(df_posiljke), "usporedba_po_posiljkama.csv", "text/csv")
+                st.dataframe(df_posiljke)
+                st.download_button("📥 Preuzmi usporedbu pošiljaka (CSV za Excel)", konvertiraj_u_excel_csv(df_posiljke), "usporedba_po_posiljkama.csv", "text/csv")
 
             with tab5:
                 st.subheader("Izdvojene preplate (gdje je naplaćeni iznos veći od ugovornog)")
                 if 'df_posiljke' in locals():
                     df_preplate = df_posiljke[df_posiljke['Razlika (Naplaćeno - Ugovoreno)'] > 0].sort_values(by='Razlika (Naplaćeno - Ugovoreno)', ascending=False)
-                    st.dataframe(df_preplate.style.format({
-                        'Ukupna_Masa_KG': '{:.2f}',
-                        'Ugovoreno_Osnovna_EUR': '{:.2f}',
-                        'Ugovoreno_Gorivo_EUR': '{:.2f}',
-                        'Ugovoreno_Ukupno_EUR': '{:.2f}',
-                        'Naplaćeno_Po_PDF_EUR': '{:.2f}',
-                        'Razlika (Naplaćeno - Ugovoreno)': '{:.2f}'
-                    }))
-                    st.download_button("📥 Preuzmi preplate po pošiljkama (CSV)", konvertiraj_u_csv(df_preplate), "preplate_po_posiljkama.csv", "text/csv")
+                    st.dataframe(df_preplate)
+                    st.download_button("📥 Preuzmi preplate po pošiljkama (CSV za Excel)", konvertiraj_u_excel_csv(df_preplate), "preplate_po_posiljkama.csv", "text/csv")
                 else:
                     st.info("Pregledajte prvo tab 4 za izračun.")
 
@@ -355,12 +339,8 @@ if uploaded_pdf is not None:
                     }]
                     
                     df_skupno = pd.DataFrame(skupni_podaci)
-                    st.table(df_skupno.style.format({
-                        'Naplaćeno ukupno (€)': '{:.2f}',
-                        'Ugovoreno ukupno (€)': '{:.2f}',
-                        'Razlika (Naplaćeno - Ugovoreno) (€)': '{:.2f}'
-                    }))
-                    st.download_button("📥 Preuzmi skupnu rekapitulaciju (CSV)", konvertiraj_u_csv(df_skupno), "skupna_rasclamba_gorivo_dostava.csv", "text/csv")
+                    st.table(df_skupno)
+                    st.download_button("📥 Preuzmi skupnu rekapitulaciju (CSV za Excel)", konvertiraj_u_excel_csv(df_skupno), "skupna_rasclamba_gorivo_dostava.csv", "text/csv")
                 else:
                     st.info("Pregledajte prvo tab 4 za izračun.")
 
