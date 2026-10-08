@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza po paletama s ugrađenom Oznakom/Brojem pošiljke, ugovornim zonama i rokovima.")
+st.markdown("Direktna analiza po paletama s potpunom ekstrakcijom svih oznaka/brojeva pošiljaka, ugovornim zonama i rokovima.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -56,7 +56,7 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. Parsiranje detaljne specifikacije paleta, primatelja, gradova, ZIP-ova, masa i Oznake/Broja
+        # 2. Parsiranje detaljne specifikacije paleta, primatelja, gradova, ZIP-ova, masa i svih Oznaka/Brojeva
         redci_paleta = []
         trenutni_shpt = None
         trenutni_datum_naloga = None
@@ -93,15 +93,19 @@ if uploaded_pdf is not None:
             if m_ref:
                 trenutni_ref = m_ref.group(1)
 
-            # Ekstrakcija Oznake/Broja (npr. OTP 34499/34497/34493 ispred palete)
-            m_otp = re.search(r'(OTP[\s\-\d\/]+)', line_str)
-            oznaka_broj = m_otp.group(1).strip() if m_otp else "N/A"
-
-            m_paleta = re.search(r'([\d\.,]+)(\d)\s+(EWP|FP|OWP)', line_str)
+            # Poboljšano prepoznavanje Oznake/Broja (hvata OTP, Groupage cargo, NALOGA, ili bilo koji tekst ispred mase i tipa palete)
+            oznaka_broj = "N/A"
+            m_paleta = re.search(r'^(.*?)\s+([\d\.,]+)(\d)\s+(EWP|FP|OWP)', line_str)
             if m_paleta and trenutni_shpt:
-                masa_str = m_paleta.group(1).replace('.', '').replace(',', '.')
-                kolicina = int(m_paleta.group(2))
-                tip_palete = m_paleta.group(3)
+                raw_oznaka = m_paleta.group(1).replace('Handelsware', '').strip()
+                if raw_oznaka:
+                    oznaka_broj = raw_oznaka
+                else:
+                    oznaka_broj = "Standardna pošiljka"
+                
+                masa_str = m_paleta.group(2).replace('.', '').replace(',', '.')
+                kolicina = int(m_paleta.group(3))
+                tip_palete = m_paleta.group(4)
                 try:
                     masa_kg = float(masa_str)
                     for _ in range(kolicina):
@@ -123,7 +127,7 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju s ugrađenom Oznakom/Brojem"):
+        if st.button("Pokreni reviziju s potpunom ekstrakcijom oznaka"):
             
             # Točno zoniranje prema službenoj tablici iz ugovora
             def odredi_zonu(row):
@@ -213,7 +217,7 @@ if uploaded_pdf is not None:
             def konvertiraj_u_csv(data_frame):
                 return data_frame.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
 
-            # 1. Pregled po paletama (Oznaka_Broj prva)
+            # 1. Pregled po paletama
             with tab1:
                 st.subheader(f"Popis svih paleta izvađenih iz PDF-a ({len(df_palete)} stavki)")
                 st.dataframe(df_palete)
