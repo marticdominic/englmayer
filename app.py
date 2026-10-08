@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s prilagođenim CSV izvozom za Excel (ispravan prikaz decimala bez pretvaranja u datume).")
+st.markdown("Direktna analiza s ispravnim čitanjem primatelja i zona isporuke.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -83,7 +83,7 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. Robusno parsiranje detaljne specifikacije
+        # 2. Robusno parsiranje detaljne specifikacije (isključivo Primatelj)
         redci_paleta = []
         lines = pdf_tekst.split('\n')
         
@@ -91,7 +91,6 @@ if uploaded_pdf is not None:
         trenutni_datum_naloga = None
         trenutni_datum_isporuke = None
         trenutni_ref = "N/A"
-        trenutni_primatelj_raw = ""
         trenutni_grad = "Zagreb"
         trenutni_zip = 10000
         
@@ -104,20 +103,22 @@ if uploaded_pdf is not None:
                 trenutni_datum_naloga = m_nalog.group(1)
                 trenutni_shpt = m_nalog.group(3)
                 trenutni_ref = "N/A"
-                trenutni_primatelj_raw = ""
                 trenutni_grad = "Zagreb"
                 trenutni_zip = 10000
             
-            if "Primatelj" in line_str:
+            # Fokusiramo se isključivo na redak koji počinje s "Primatelj"
+            if line_str.startswith("Primatelj"):
                 primatelj_lines = [line_str]
                 j = i + 1
+                # Čitamo redke sve do datuma isporuke ili oznake
                 while j < len(lines) and not any(k in lines[j] for k in ["Datum isporuke:", "Oznaka/Broj", "Referenca:", "Paritet:", "Suma"]):
                     primatelj_lines.append(lines[j].strip())
                     j += 1
                 
-                trenutni_primatelj_raw = " ".join(primatelj_lines)
+                p_tekst = " ".join(primatelj_lines)
                 
-                m_zip_grad = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', trenutni_primatelj_raw)
+                # Tražimo HR-ZIP i grad unutar primatelja (uzimamo zadnje pojavljivanje ili format HR-XXXXX Grad)
+                m_zip_grad = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', p_tekst)
                 if m_zip_grad:
                     trenutni_zip = int(m_zip_grad.group(1))
                     trenutni_grad = m_zip_grad.group(2).strip()
@@ -147,7 +148,6 @@ if uploaded_pdf is not None:
                             'LA-ID': trenutni_shpt,
                             'Datum_Naloga': trenutni_datum_naloga,
                             'Datum_Isporuke': trenutni_datum_isporuke,
-                            'Primatelj_Blok': trenutni_primatelj_raw,
                             'Grad': trenutni_grad,
                             'ZIP': trenutni_zip,
                             'Masa_Palete_KG': round(masa_kg, 2),
@@ -160,7 +160,7 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju s ispravnim Excel formatom brojeva"):
+        if st.button("Pokreni reviziju s točnim čitanjem primatelja"):
             
             def odredi_zonu(row):
                 city = str(row.get('Grad', '')).strip().lower()
@@ -243,7 +243,6 @@ if uploaded_pdf is not None:
                 "6. Skupna Raščlamba (Gorivo vs Dostava)"
             ])
             
-            # Pomoćna funkcija za CSV izvoz prilagođen Excelu (zamjena točke zarezom za decimale)
             def konvertiraj_u_excel_csv(data_frame):
                 df_export = data_frame.copy()
                 for col in df_export.select_dtypes(include=['float64', 'float32', 'int64']):
@@ -311,7 +310,6 @@ if uploaded_pdf is not None:
                 else:
                     st.info("Pregledajte prvo tab 4 za izračun.")
 
-            # 6. Skupni Tab: Ukupno gorivo vs dostava na razini cijelog računa
             with tab6:
                 st.subheader("Skupni financijski pregled komponenti (Cijeli račun)")
                 if 'df_posiljke' in locals():
