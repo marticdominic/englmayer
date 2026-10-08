@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s preciznim parsiranjem isključivo bloka primatelja.")
+st.markdown("Direktna analiza s točnim čitanjem primatelja i ispravnim sintaksnim kodom.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -69,7 +69,7 @@ if uploaded_pdf is not None:
                     m_amt = re.search(r'([\d\.,]+)\s*$', line)
                     if m_amt:
                         try:
-                            val = float(m_amt.compr(...) if hasattr(m_amt, 'compr') else float(m_amt.group(1).replace('.', '').replace(',', '.'))
+                            val = float(m_amt.group(1).replace('.', '').replace(',', '.'))
                             pdf_osnovna_iznosi[trenutni_ep] = round(pdf_osnovna_iznosi.get(trenutni_ep, 0.0) + val, 2)
                         except:
                             pass
@@ -103,7 +103,6 @@ if uploaded_pdf is not None:
                 trenutni_datum_naloga = m_nalog.group(1)
                 trenutni_shpt = m_nalog.group(3)
                 trenutni_ref = "N/A"
-                # Reset na zadano prije čitanja novog primatelja
                 trenutni_grad = "Zagreb"
                 trenutni_zip = 10000
             
@@ -121,9 +120,7 @@ if uploaded_pdf is not None:
                 m_zip_grad = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', p_tekst)
                 if m_zip_grad:
                     trenutni_zip = int(m_zip_grad.group(1))
-                    # Očišćeni naziv grada (uklanjamo eventualne suvišne sufikse ili brojeve telefona ako se potfešte)
                     g_raw = m_zip_grad.group(2).strip()
-                    # Uzimamo prvu riječ ili čistu rečenicu grada do broja telefona
                     g_clean = re.split(r'\d{3}', g_raw)[0].strip()
                     trenutni_grad = g_clean if g_clean else g_raw
 
