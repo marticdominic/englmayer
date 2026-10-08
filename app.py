@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza po paletama s potpunom ekstrakcijom svih oznaka/brojeva pošiljaka, ugovornim zonama i rokovima.")
+st.markdown("Direktna analiza po paletama s ispravnim parsiranjem primatelja, gradova, ZIP-ova i ugovornih zona.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -56,31 +56,43 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. Parsiranje detaljne specifikacije paleta, primatelja, gradova, ZIP-ova, masa i svih Oznaka/Brojeva
+        # 2. Robusno parsiranje detaljne specifikacije (spajanje redaka primatelja i točno izvlačenje ZIP/grada)
         redci_paleta = []
+        lines = pdf_tekst.split('\n')
+        
         trenutni_shpt = None
         trenutni_datum_naloga = None
         trenutni_datum_isporuke = None
         trenutni_ref = "N/A"
-        trenutni_primatelj = None
+        trenutni_primatelj_raw = ""
         trenutni_grad = "Zagreb"
         trenutni_zip = 10000
-
-        for line in pdf_tekst.split('\n'):
-            line_str = line.strip()
+        
+        i = 0
+        while i < len(lines):
+            line_str = lines[i].strip()
             
             m_nalog = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4}\.)\s*Pošiljka:\s*([^\s]+)\s*LA-ID:\s*(EP-\d+)', line_str)
             if m_nalog:
                 trenutni_datum_naloga = m_nalog.group(1)
                 trenutni_shpt = m_nalog.group(3)
-                trenutni_primatelj = "N/A"
+                trenutni_ref = "N/A"
+                trenutni_primatelj_raw = ""
                 trenutni_grad = "Zagreb"
                 trenutni_zip = 10000
-                trenutni_ref = "N/A"
             
             if "Primatelj" in line_str:
-                trenutni_primatelj = line_str
-                m_zip_grad = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', line_str)
+                # Prikupi više redaka ako je adresa u više redova (dok se ne pojavi Datum isporuke, Oznaka/Broj ili slično)
+                primatelj_lines = [line_str]
+                j = i + 1
+                while j < len(lines) and not any(k in lines[j] for k in ["Datum isporuke:", "Oznaka/Broj", "Referenca:", "Paritet:", "Suma"]):
+                    primatelj_lines.append(lines[j].strip())
+                    j += 1
+                
+                trenutni_primatelj_raw = " ".join(primatelj_lines)
+                
+                # Ekstrakcija ZIP-a i grada iz cijelog bloka primatelja
+                m_zip_grad = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', trenutni_primatelj_raw)
                 if m_zip_grad:
                     trenutni_zip = int(m_zip_grad.group(1))
                     trenutni_grad = m_zip_grad.group(2).strip()
@@ -93,15 +105,11 @@ if uploaded_pdf is not None:
             if m_ref:
                 trenutni_ref = m_ref.group(1)
 
-            # Poboljšano prepoznavanje Oznake/Broja (hvata OTP, Groupage cargo, NALOGA, ili bilo koji tekst ispred mase i tipa palete)
-            oznaka_broj = "N/A"
+            # Ekstrakcija Oznake/Broja i paleta
             m_paleta = re.search(r'^(.*?)\s+([\d\.,]+)(\d)\s+(EWP|FP|OWP)', line_str)
             if m_paleta and trenutni_shpt:
                 raw_oznaka = m_paleta.group(1).replace('Handelsware', '').strip()
-                if raw_oznaka:
-                    oznaka_broj = raw_oznaka
-                else:
-                    oznaka_broj = "Standardna pošiljka"
+                oznaka_broj = raw_oznaka if raw_oznaka else "Standardna pošiljka"
                 
                 masa_str = m_paleta.group(2).replace('.', '').replace(',', '.')
                 kolicina = int(m_paleta.group(3))
@@ -115,7 +123,7 @@ if uploaded_pdf is not None:
                             'LA-ID': trenutni_shpt,
                             'Datum_Naloga': trenutni_datum_naloga,
                             'Datum_Isporuke': trenutni_datum_isporuke,
-                            'Primatelj': trenutni_primatelj,
+                            'Primatelj_Blok': trenutni_primatelj_raw,
                             'Grad': trenutni_grad,
                             'ZIP': trenutni_zip,
                             'Masa_Palete_KG': masa_kg,
@@ -123,11 +131,12 @@ if uploaded_pdf is not None:
                         })
                 except:
                     pass
+            i += 1
 
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju s potpunom ekstrakcijom oznaka"):
+        if st.button("Pokreni reviziju s ispravnim zonama i primateljima"):
             
             # Točno zoniranje prema službenoj tablici iz ugovora
             def odredi_zonu(row):
@@ -241,7 +250,7 @@ if uploaded_pdf is not None:
                 
                 st.markdown("---")
                 
-                cols_rok = ['Oznaka_Broj', 'LA-ID', 'Datum_Naloga', 'Datum_Isporuke', 'Stvarni_Radni_Dani', 'Izracunata_Zona', 'Dopušteni_Rok_Radnih_Dana', 'Status_Roka', 'Grad']
+                cols_rok = ['Oznaka_Broj', 'LA-ID', 'Grad', 'ZIP', 'Izracunata_Zona', 'Datum_Naloga', 'Datum_Isporuke', 'Stvarni_Radni_Dani', 'Dopušteni_Rok_Radnih_Dana', 'Status_Roka']
                 st.dataframe(df_palete[cols_rok])
                 st.download_button("📥 Preuzmi analitiku rokova (CSV)", konvertiraj_u_csv(df_palete[cols_rok]), "analitika_rokova_isporuke.csv", "text/csv")
                 
@@ -257,7 +266,7 @@ if uploaded_pdf is not None:
             with tab4:
                 st.subheader("Usporedba pošiljaka zbrojenih po referencama / LA-ID brojevima")
                 
-                df_posiljke = df_palete.groupby(['Oznaka_Broj', 'LA-ID', 'Grad', 'Izracunata_Zona', 'Datum_Naloga', 'Datum_Isporuke']).agg(
+                df_posiljke = df_palete.groupby(['Oznaka_Broj', 'LA-ID', 'Grad', 'ZIP', 'Izracunata_Zona', 'Datum_Naloga', 'Datum_Isporuke']).agg(
                     Broj_Paleta=('Masa_Palete_KG', 'count'),
                     Ukupna_Masa_KG=('Masa_Palete_KG', 'sum'),
                     Ugovoreno_Ukupno_EUR=('Ugovoreno_Paleta_Sa_Gorivom', 'sum')
