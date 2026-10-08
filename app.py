@@ -3,7 +3,7 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import pypdf
 import re
-import io
+import math
 
 # Konfiguracija stranice
 st.set_page_config(
@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza po paletama s ispravnim parsiranjem primatelja, gradova, ZIP-ova i ugovornih zona.")
+st.markdown("Direktna analiza po paletama s automatskim višim zaokruživanjem dodatka za gorivo, ispravnim zonama i primateljima.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -23,13 +23,15 @@ def izracunaj_dodatak_gorivo(cijena):
     osnova = 1.46
     korak = 0.07
     if cijena <= osnova:
-        return 0.0
+        return 0
     else:
         razlika = cijena - osnova
-        return round((razlika / korak) * 1.0, 2)
+        tocan_iznos = (razlika / korak) * 1.0
+        # Zaokruživanje na viši cijeli broj (npr. 3.01 -> 4)
+        return math.ceil(tocan_iznos)
 
 dodatak_gorivo_pct = izracunaj_dodatak_gorivo(cijena_goriva)
-st.sidebar.info(f"Izračunati dodatak za gorivo (baza 1.46 €): **{dodatak_gorivo_pct}%**")
+st.sidebar.info(f"Izračunati dodatak za gorivo (baza 1.46 €, zaokruženo naviše): **{dodatak_gorivo_pct}%**")
 
 st.sidebar.header("2. Učitavanje PDF-a")
 uploaded_pdf = st.sidebar.file_uploader("Učitaj PDF specifikaciju računa", type=["pdf"])
@@ -82,7 +84,6 @@ if uploaded_pdf is not None:
                 trenutni_zip = 10000
             
             if "Primatelj" in line_str:
-                # Prikupi više redaka ako je adresa u više redova (dok se ne pojavi Datum isporuke, Oznaka/Broj ili slično)
                 primatelj_lines = [line_str]
                 j = i + 1
                 while j < len(lines) and not any(k in lines[j] for k in ["Datum isporuke:", "Oznaka/Broj", "Referenca:", "Paritet:", "Suma"]):
@@ -91,7 +92,6 @@ if uploaded_pdf is not None:
                 
                 trenutni_primatelj_raw = " ".join(primatelj_lines)
                 
-                # Ekstrakcija ZIP-a i grada iz cijelog bloka primatelja
                 m_zip_grad = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s\-\.]+)', trenutni_primatelj_raw)
                 if m_zip_grad:
                     trenutni_zip = int(m_zip_grad.group(1))
@@ -136,7 +136,7 @@ if uploaded_pdf is not None:
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
 
-        if st.button("Pokreni reviziju s ispravnim zonama i primateljima"):
+        if st.button("Pokreni reviziju s korigiranim gorivom i zonama"):
             
             # Točno zoniranje prema službenoj tablici iz ugovora
             def odredi_zonu(row):
@@ -276,19 +276,4 @@ if uploaded_pdf is not None:
                 df_posiljke['Razlika (Naplaćeno - Ugovoreno)'] = round(df_posiljke['Naplaćeno_Po_PDF_EUR'] - df_posiljke['Ugovoreno_Ukupno_EUR'], 2)
                 
                 st.dataframe(df_posiljke)
-                st.download_button("📥 Preuzmi usporedbu pošiljaka (CSV)", konvertiraj_u_csv(df_posiljke), "usporedba_po_posiljkama.csv", "text/csv")
-
-            # 5. Preplate po pošiljkama
-            with tab5:
-                st.subheader("Izdvojene preplate (gdje je naplaćeni iznos veći od ugovornog)")
-                if 'df_posiljke' in locals():
-                    df_preplate = df_posiljke[df_posiljke['Razlika (Naplaćeno - Ugovoreno)'] > 0].sort_values(by='Razlika (Naplaćeno - Ugovoreno)', ascending=False)
-                    st.dataframe(df_preplate)
-                    st.download_button("📥 Preuzmi preplate po pošiljkama (CSV)", konvertiraj_u_csv(df_preplate), "preplate_po_posiljkama.csv", "text/csv")
-                else:
-                    st.info("Pregledajte prvo tab 4 za izračun.")
-
-    except Exception as e:
-        st.error(f"Greška kod obrade PDF-a: {e}")
-else:
-    st.info("Molimo učitajte PDF specifikaciju računa u bočnoj traci.")
+                st.download_
