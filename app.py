@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s poboljšanim parsiranjem odredišta iz pariteta i primatelja.")
+st.markdown("Direktna analiza s ispravnim nazivima kolona i robusnim parsiranjem odredišta.")
 
 # Sidebar - Parametri obračuna
 st.sidebar.header("1. Ugovorni parametri")
@@ -280,7 +280,7 @@ if uploaded_pdf is not None:
                     Datum_Isporuke=('Datum_Isporuke', 'max'),
                     Broj_Paleta=('Masa_Palete_KG', 'count'),
                     Ukupna_Masa_KG=('Masa_Palete_KG', 'sum'),
-                    Ugovoreno_Osnovna_EUR=('Ugovoreno_Osnovna_Ukupno', 'sum'),
+                    Ugovoreno_Osnovna_EUR=('Ugovorena_Osnovna_Ukupno', 'sum'),
                     Ugovoreno_Gorivo_EUR=('Ugovoreni_Iznos_Goriva', 'sum'),
                     Ugovoreno_Ukupno_EUR=('Ugovoreno_Paleta_Sa_Gorivom', 'sum')
                 ).reset_index()
