@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s poboljšanim parsiranjem tablica, težina i pariteta.")
+st.markdown("Direktna analiza prema strukturi i poljima označenim na specifikaciji računa.")
 
 # Sveobuhvatni službeni rječnik hrvatskih gradova i poštanskih brojeva
 HR_GRADOVI_ZIP = {
@@ -60,7 +60,6 @@ uploaded_pdf = st.sidebar.file_uploader("Učitaj PDF specifikaciju računa", typ
 
 if uploaded_pdf is not None:
     try:
-        # Čitanje PDF-a
         reader = pypdf.PdfReader(uploaded_pdf)
         pdf_tekst = ""
         for page in reader.pages:
@@ -68,7 +67,7 @@ if uploaded_pdf is not None:
             if t:
                 pdf_tekst += t + "\n"
         
-        # 1. Ekstrakcija ukupnih iznosa i stavki iz PDF-a
+        # Ekstrakcija financijskih stavki po LA-ID-u iz završnog dijela računa
         pdf_iznosi = {}
         pdf_gorivo_iznosi = {}
         pdf_osnovna_iznosi = {}
@@ -80,7 +79,7 @@ if uploaded_pdf is not None:
                 trenutni_ep = m_ep.group(1)
             
             if trenutni_ep:
-                if any(kw in line for kw in ["Dizel", "dizel", "gorivo", "Gorivo"]):
+                if any(kw in line.lower() for kw in ["dizel", "gorivo"]):
                     m_amt = re.search(r'([\d\.,]+)\s*$', line)
                     if m_amt:
                         try:
@@ -88,7 +87,7 @@ if uploaded_pdf is not None:
                             pdf_gorivo_iznosi[trenutni_ep] = round(pdf_gorivo_iznosi.get(trenutni_ep, 0.0) + val, 2)
                         except:
                             pass
-                elif any(kw in line for kw in ["Roba", "roba", "prijevoz", "Prijevoz", "zona", "Zona"]):
+                elif any(kw in line.lower() for kw in ["roba", "prijevoz", "zona"]):
                     m_amt = re.search(r'([\d\.,]+)\s*$', line)
                     if m_amt:
                         try:
@@ -106,7 +105,7 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. ROBUSTNO PARSIRANJE POŠILJAKA I PALETA
+        # PRECIZNO PARSIRANJE POŠILJAKA PREMA ELEMENTIMA SA SLIKE
         redci_paleta = []
         blokovi_naloga = re.split(r'(LA-ID:\s*EP-\d+)', pdf_tekst)
         
@@ -121,46 +120,33 @@ if uploaded_pdf is not None:
                 continue
             trenutni_shpt = m_epid.group(1)
             
+            # Datum naloga
             m_datum = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4}\.?)', p_nalog_tekst)
             trenutni_datum_naloga = m_datum.group(1) if m_datum else "01.01.2026."
             
+            # Referenca
             m_ref = re.search(r'Referenca:\s*([^\s]+)', p_nalog_tekst)
             trenutni_ref = m_ref.group(1) if m_ref else "N/A"
             
+            # Datum isporuke
             m_isporuka = re.search(r'Datum isporuke:\s*(\d{2}\.\d{2}\.\d{4})', p_nalog_tekst)
             trenutni_datum_isporuke = m_isporuka.group(1) if m_isporuka else None
 
-            # ČITANJE GRADA IZ PARITETA
+            # Grad i ZIP iz Pariteta / Primatelja
             trenutni_grad = "Nepoznato"
             trenutni_zip = 0
             
             paritet_linija = ""
             for line in p_nalog_tekst.split('\n'):
-                if "paritet" in line.lower() or "istovareno" in line.lower():
-                    paritet_linija = line.lower()
+                if "paritet" in line.lower() or "istovareno" in line.lower() or "primatelj" in line.lower():
+                    paritet_linija += " " + line.lower()
 
-            p_tekst_ciyi = paritet_linija if paritet_linija else p_nalog_tekst.lower()
-            
-            pronadeno = False
             for grad_naziv, z_broj in HR_GRADOVI_ZIP.items():
-                if grad_naziv in p_tekst_ciyi:
+                if grad_naziv in paritet_linija:
                     trenutni_grad = grad_naziv.capitalize()
                     trenutni_zip = z_broj
-                    pronadeno = True
                     break
             
-            if not pronadeno and "istovareno" in p_tekst_ciyi:
-                dio_nakon = re.split(r'istovareno', p_tekst_ciyi, flags=re.IGNORECASE)
-                if len(dio_nakon) > 1:
-                    c_kandidat = dio_nakon[1].strip().split()
-                    if c_kandidat:
-                        c_ista = c_kandidat[0].strip(".,").capitalize()
-                        if c_ista.lower() not in ["na", "mjesto", "dpu"]:
-                            trenutni_grad = c_ista
-                            c_key = c_ista.lower()
-                            if c_key in HR_GRADOVI_ZIP:
-                                trenutni_zip = HR_GRADOVI_ZIP[c_key]
-
             if trenutni_zip == 0:
                 sve_pojave_zip = re.findall(r'HR-(\d{5})', p_nalog_tekst)
                 for z_val in sve_pojave_zip:
@@ -168,37 +154,34 @@ if uploaded_pdf is not None:
                         trenutni_zip = int(z_val)
                         break
 
-            # PARSIRANJE REDAKA PALETA (Fleksibilno prepoznavanje tipa palete i mase)
+            # Čitanje tablice paleta (Oznaka/Broj, Količi, Pak., Masa)
             linije_bloka = p_nalog_tekst.split('\n')
             for idx_l, linija in enumerate(linije_bloka):
-                linija_upper = linija.upper()
+                linija_ upper = linija.upper()
                 if any(t in linija_upper for t in ['EWP', 'FP', 'OWP', 'CLL']) and "SUMA" not in linija_upper:
-                    # Pronađi tip palete
                     tip_palete = "FP"
                     for t_tip in ['EWP', 'OWP', 'CLL', 'FP']:
                         if t_tip in linija_upper:
                             tip_palete = t_tip
                             break
                     
-                    # Pokušaj izvući masu (težinu u KG koja ima zarez i barem 2 decimale, npr 581,00)
+                    # Traženje mase (KG) u okolnim retcima
                     masa_kg = 0.0
-                    # Pretraži trenutnu liniju i 3 linije ispod/iznad
                     for k in range(max(0, idx_l - 2), min(len(linije_bloka), idx_l + 4)):
                          m_masa = re.search(r'(\d+[\d\.]*,\d{2,3})', linije_bloka[k])
                          if m_masa:
                              potencijalna_masa = m_masa.group(1).replace('.', '').replace(',', '.')
                              val_kg = float(potencijalna_masa)
-                             # Masa palete je obično veća od 1 kg (da izbjegnemo CBM poput 1,133)
-                             if val_kg > 5.0:
+                             if val_kg > 5.0:  # Ignoriramo CBM, tražimo kilograme
                                  masa_kg = val_kg
                                  break
                     
                     if masa_kg > 0:
-                        # Oznaka/Broj je obično u linijama iznad
+                        # Oznaka/Broj (npr. OTP 66265)
                         oznaka_broj = "Standardna pošiljka"
                         for k in range(max(0, idx_l - 4), idx_l):
                             kand = linije_bloka[k].strip()
-                            if kand and "|" not in kand and not any(w in kand.lower() for w in ['sadržaj', 'količi', 'masa', 'ldm', 'cbm', 'paritet', 'referenca']):
+                            if kand and "|" not in kand and not any(w in kand.lower() for w in ['sadržaj', 'količi', 'masa', 'ldm', 'cbm', 'paritet', 'referenca', 'primatelj']):
                                 oznaka_broj = kand
                                 break
                         
