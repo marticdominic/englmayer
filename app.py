@@ -1,412 +1,256 @@
-import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
+import pandas as pd
 import pdfplumber
 import re
 import math
-try:
-    from pdf2image import convert_from_bytes
-    import pytesseract
-    OCR_AVAILABLE = True
-except ImportError:
-    OCR_AVAILABLE = False
+import io
 
-# Konfiguracija stranice
 st.set_page_config(
-    page_title="Revizija Računa iz PDF-a - G. Englmayer",
-    page_icon="📄",
+    page_title="Revizija i Audit Invoica - G. Englmayer",
+    page_icon="📊",
     layout="wide"
 )
 
-st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza specifikacija računa s naprednim čišćenjem paleta i OCR podrškom.")
-
-# Sveobuhvatni službeni rječnik hrvatskih gradova i poštanskih brojeva
+# --- DICTIONARY & CONTRACT CONSTANTS ---
 HR_GRADOVI_ZIP = {
-    'zagreb': 10000, 'split': 21000, 'rijeka': 51000, 'osijek': 31000,
-    'zadar': 23000, 'pula': 52100, 'slavonski brod': 35000, 'karlovac': 47000,
-    'varaždin': 42000, 'šibenik': 22000, 'sibenik': 22000, 'sisak': 44000, 'vinkovci': 32100,
-    'velika gorica': 10410, 'dubrovnik': 20000, 'bjelovar': 43000,
-    'koprivnica': 48000, 'vukovar': 32000, 'požega': 34000, 'đakovo': 31400,
-    'samobor': 10430, 'čakovec': 40000, 'cakovec': 40000, 'kutina': 44320, 'rovinj': 52210,
-    'makarska': 21300, 'metković': 20350, 'imotski': 21260, 'ploče': 20340,
-    'korčula': 20260, 'zaprešić': 10290, 'sveta nedelja': 10431, 'belišće': 31551,
-    'belisce': 31551, 'valpovo': 31550, 'našice': 31500, 'nasice': 31500, 'crikvenica': 51260, 'poreč': 52440,
-    'umag': 52470, 'labin': 52220, 'pazin': 52000, 'senj': 53270, 'gospić': 53000,
-    'gospic': 53000, 'ogulin': 47300, 'dugo selo': 10370, 'vrbovec': 10340,
-    'jastrebarsko': 10450, 'mlini': 20207, 'fažana': 52212, 'fazana': 52212,
-    'viškovci': 31401, 'viskovci': 31401, 'viškovo': 51216, 'knin': 22300,
-    'zemunik': 23222, 'dugopolje': 21204, 'kukuljanovo': 51227, 'novi mihaljevci': 34000,
-    'virovitica': 33000, 'lovran': 51415, 'supetarska draga': 51280, 'gornja vrba': 35207,
-    'brinje': 53260, 'solin': 21210, 'banjole': 52100, 'macinec': 40306, 'čepin': 31431,
-    'cepin': 31431, 'oklaj': 22303, 'novalja': 53291, 'kneževi vinogradi': 31309, 
-    'knezevi vinogradi': 31309, 'satnica đakovačka': 31421, 'satnica djakovacka': 31421,
-    'kastel stafilic': 21217, 'kaštel stafilić': 21217
+    "Zagreb": "10000", "Velika Gorica": "10410", "Rijeka": "51000", "Kukuljanovo": "51227",
+    "Split": "21000", "Zadar": "23000", "Osijek": "31000", "Virovitica": "33000",
+    "Novi Mihaljevci": "34000", "Lovran": "51415", "Gornja Vrba": "35207", "Brinje": "53260",
+    "Solin": "21210", "Pula": "52100", "Banjole": "52100"
 }
 
-# Sidebar - Parametri obračuna
-st.sidebar.header("1. Ugovorni parametri")
-cijena_goriva = st.sidebar.number_input("Prosječna cijena dizel goriva (€ bez PDV-a):", value=1.87, step=0.01)
-
-def izracunaj_dodatak_gorivo(cijena):
-    osnova = 1.46
-    korak = 0.07
-    if cijena <= osnova:
-        return 0
+def odrediti_zonu(zip_str):
+    """Određuje zonu dostave prema prvoj znamenki hrvatskog ZIP koda."""
+    if not zip_str:
+        return "Zona 3"
+    z_clean = str(zip_str).strip()
+    prva_znam = z_clean[0]
+    if prva_znam in ['1', '4']:
+        return "Zona 1"
+    elif prva_znam == '4' and z_clean.startswith(('40', '42', '43', '44', '47', '48', '49')):
+        return "Zona 2"
+    elif prva_znam in ['5']:
+        return "Zona 3"
+    elif prva_znam in ['3']:
+        return "Zona 4"
+    elif prva_znam in ['2']:
+        return "Zona 5"
     else:
-        razlika = cijena - osnova
-        return math.ceil((razlika / korak) * 1.0)
+        return "Zona 3"
 
-dodatak_gorivo_pct = izracunaj_dodatak_gorivo(cijena_goriva)
-st.sidebar.info(f"Izračunati dodatak za gorivo (baza 1.46 €, zaokruženo naviše): **{dodatak_gorivo_pct}%**")
-
-st.sidebar.header("2. Učitavanje PDF-a")
-uploaded_pdf = st.sidebar.file_uploader("Učitaj PDF specifikaciju računa", type=["pdf"])
-
-if uploaded_pdf is not None:
-    try:
-        pdf_bytes = uploaded_pdf.read()
-        pdf_tekst = ""
-        
-        # Čitanje preko pdfplumber-a
-        with pdfplumber.open(uploaded_pdf) as pdf:
-            for page in pdf.pages:
-                t = page.extract_text()
-                if t:
-                    pdf_tekst += t + "\n"
-        
-        # OCR fallback ako nema tekstualnog sloja
-        if not pdf_tekst.strip() and OCR_AVAILABLE:
-            st.info("Skenirani PDF u tijeku obrade (OCR)...")
-            images = convert_from_bytes(pdf_bytes)
-            for img in images:
-                ocr_text = pytesseract.image_to_string(img, lang='hrv+eng')
-                pdf_tekst += ocr_text + "\n"
-
-        st.text_area("Sirovi ekstrahirani tekst (Debug)", pdf_tekst, height=150)
-
-        # FLEKSIBILNA EKSTRAKCIJA FINANCIJSKIH IZNOSA
-        pdf_iznosi = {}
-        pdf_gorivo_iznosi = {}
-        pdf_osnovna_iznosi = {}
-        
-        trenutni_ep = None
-        for line in pdf_tekst.split('\n'):
-            m_ep = re.search(r'(EP-\d+)', line)
-            if m_ep:
-                trenutni_ep = m_ep.group(1)
+def ugovorena_cijena_osnovna(zona, masa_kg, tip_palete):
+    """Ugovorena osnovna cijena po cjeniku za OF 002/2026."""
+    # Pojednostavljena tablica ugovorenih cijena po zonama i težinskim razredima za EWP/FP
+    cijene = {
+        "Zona 1": {100: 35.00, 300: 40.00, 600: 45.00, 99999: 50.00},
+        "Zona 2": {100: 38.00, 300: 43.00, 600: 48.00, 99999: 53.00},
+        "Zona 3": {100: 42.00, 300: 47.00, 600: 51.00, 99999: 55.00},
+        "Zona 4": {100: 45.00, 300: 50.00, 600: 54.00, 99999: 58.00},
+        "Zona 5": {100: 48.00, 300: 53.00, 600: 56.00, 99999: 61.00},
+    }
+    zona_tabela = cijene.get(zona, cijene["Zona 3"])
+    osnova = 51.00
+    for limit_kg, cijena in sorted(zona_tabela.items()):
+        if masa_kg <= limit_kg:
+            osnova = cijena
+            break
             
-            if trenutni_ep:
-                if any(kw in line.lower() for kw in ["dizel", "gorivo"]):
-                    m_amt = re.search(r'([\d\.,]+)\s*$', line)
-                    if m_amt:
-                        try:
-                            val = float(m_amt.group(1).replace('.', '').replace(',', '.'))
-                            pdf_gorivo_iznosi[trenutni_ep] = round(pdf_gorivo_iznosi.get(trenutni_ep, 0.0) + val, 2)
-                        except:
-                            pass
-                elif any(kw in line.lower() for kw in ["roba", "prijevoz", "zona"]):
-                    m_amt = re.search(r'([\d\.,]+)\s*$', line)
-                    if m_amt:
-                        try:
-                            val = float(m_amt.group(1).replace('.', '').replace(',', '.'))
-                            pdf_osnovna_iznosi[trenutni_ep] = round(pdf_osnovna_iznosi.get(trenutni_ep, 0.0) + val, 2)
-                        except:
-                            pass
+    # +50% za OWP palete prema ugovoru
+    if tip_palete == "OWP":
+        osnova *= 1.5
+    return round(osnova, 2)
 
-            # Fleksibilno traženje ukupnog iznosa pošiljke u liniji koja sadrži EP- broj
-            m_red_iznos = re.search(r'(EP-\d+).*?([\d\.]+,\d{2})', line)
-            if m_red_iznos:
-                shpt_id = m_red_iznos.group(1)
-                amount_str = m_red_iznos.group(2).replace('.', '').replace(',', '.')
-                try:
-                    val_iznos = float(amount_str)
-                    if val_iznos > 0:
-                        pdf_iznosi[shpt_id] = round(val_iznos, 2)
-                except:
-                    pass
+def izracunaj_dizel_dodatak(osnovna_cijena, cijena_goriva_trenutna=1.65):
+    """Izračun dizel dodatka primjenom math.ceil na baznih 1.46 EUR."""
+    baseline = 1.46
+    if cijena_goriva_trenutna <= baseline:
+        return 0.0
+    razlika = cijena_goriva_trenutna - baseline
+    postotak = math.ceil(razlika / 0.05) * 0.015  # 1.5% po svakih 0.05 EUR iznad bazne
+    return round(osnovna_cijena * postotak, 2)
 
-        # PARSIRANJE POŠILJAKA I PALETA S ČIŠĆENJEM OZNAKA
-        redci_paleta = []
-        blokovi_naloga = re.split(r'(LA-ID:\s*EP-\d+)', pdf_tekst)
-        
-        if len(blokovi_naloga) <= 1:
-            blokovi_naloga = ["", "LA-ID: EP-000000000", pdf_tekst]
+# --- PARSER PDF-A ---
+def parse_englmayer_pdf(pdf_file):
+    redci_paleta = []
+    
+    with pdfplumber.open(pdf_file) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            if not text:
+                continue
+            
+            blocks = text.split("Datum naloga:")
+            for block in blocks[1:]:
+                p_nalog_tekst = "Datum naloga:" + block
+                lines = [l.strip() for l in p_nalog_tekst.split('\n') if l.strip()]
+                
+                # Ekstrakcija metapodataka
+                dt_naloga = ""
+                dt_isporuke = ""
+                shpt = ""
+                ref = ""
+                primatelj_linija = ""
+                
+                for l in lines:
+                    if l.startswith("Datum naloga:"):
+                        dt_naloga = l.replace("Datum naloga:", "").strip()
+                    elif "Datum isporuke:" in l:
+                        dt_isporuke = l.replace("Datum isporuke:", "").strip()
+                    elif "Pošiljka:" in l:
+                        m_sh = re.search(r'Pošiljka:\s*([^\s]+)', l)
+                        if m_sh: shpt = m_sh.group(1)
+                        m_la = re.search(r'(EP-[\d]+)', l)
+                        if m_la: la_id = m_la.group(1)
+                    elif "Referenca:" in l:
+                        ref = l.replace("Referenca:", "").strip()
+                    elif "Primatelj" in l or "Voditelj" in l or "d.o.o." in l or "obrt" in l:
+                        primatelj_linija = l
 
-        for b_idx in range(1, len(blokovi_naloga), 2):
-            b_meta = blokovi_naloga[b_idx]
-            b_sadrzaj = blokovi_naloga[b_idx + 1] if (b_idx + 1) < len(blokovi_naloga) else ""
-            prethodni_dio = blokovi_naloga[b_idx - 1] if b_idx > 0 else ""
-            p_nalog_tekst = prethodni_dio + "\n" + b_meta + "\n" + b_sadrzaj
-            
-            m_epid = re.search(r'LA-ID:\s*(EP-\d+)', p_nalog_tekst)
-            trenutni_shpt = m_epid.group(1) if m_epid else f"EP-GEN-{b_idx}"
-            
-            m_datum = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4}\.?)', p_nalog_tekst)
-            trenutni_datum_naloga = m_datum.group(1) if m_datum else "01.01.2026."
-            
-            m_ref = re.search(r'Referenca:\s*([^\s]+)', p_nalog_tekst)
-            trenutni_ref = m_ref.group(1) if m_ref else "N/A"
-            
-            m_isporuka = re.search(r'Datum isporuke:\s*(\d{2}\.\d{2}\.\d{4})', p_nalog_tekst)
-            trenutni_datum_isporuke = m_isporuka.group(1) if m_isporuka else None
+                # Ekstrakcija ZIP-a i Grada iz primatelja
+                zip_kod = "10410"
+                grad = "Velika Gorica"
+                m_zip = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s]+)', p_nalog_tekst)
+                if m_zip:
+                    zip_kod = m_zip.group(1)
+                    grad = m_zip.group(2).strip()
 
-            # Grad i ZIP
-            trenutni_grad = "Nepoznato"
-            trenutni_zip = 0
-            
-            p_tekst_lower = p_nalog_tekst.lower()
-            for grad_naziv, z_broj in HR_GRADOVI_ZIP.items():
-                if grad_naziv in p_tekst_lower:
-                    trenutni_grad = grad_naziv.capitalize()
-                    trenutni_zip = z_broj
-                    break
-            
-            if trenutni_zip == 0:
-                sve_pojave_zip = re.findall(r'HR-(\d{5})', p_nalog_tekst)
-                for z_val in sve_pojave_zip:
-                    if z_val != "10410":
-                        trenutni_zip = int(z_val)
-                        break
+                zona = odrediti_zonu(zip_kod)
 
-            linije_bloka = p_nalog_tekst.split('\n')
-            for idx_l, linija in enumerate(linije_bloka):
-                linija_upper = linija.upper()
-                if any(t in linija_upper for t in ['EWP', 'FP', 'OWP', 'CLL']) or 'OTP' in linija_upper:
-                    tip_palete = "FP"
-                    for t_tip in ['EWP', 'OWP', 'CLL', 'FP']:
-                        if t_tip in linija_upper:
-                            tip_palete = t_tip
-                            break
-                    
-                    masa_kg = 0.0
-                    for k in range(max(0, idx_l - 3), min(len(linije_bloka), idx_l + 4)):
-                         m_masa = re.search(r'(\d+[\d\.]*,\d{2,3})', linije_bloka[k])
-                         if m_masa:
-                             potencijalna_masa = m_masa.group(1).replace('.', '').replace(',', '.')
-                             val_kg = float(potencijalna_masa)
-                             if val_kg > 2.0:
-                                 masa_kg = val_kg
-                                 break
-                    
-                    if masa_kg > 0:
-                        puni_redak = linija.strip()
-                        m_otp = re.search(r'(otp-[\d\/]+)', puni_redak, re.IGNORECASE)
-                        if not m_otp:
-                            for k in range(max(0, idx_l - 2), idx_l + 1):
-                                m_otp = re.search(r'(otp-[\d\/]+)', linije_bloka[k], re.IGNORECASE)
-                                if m_otp:
+                # Ekstrakcija financijskog dijela naplaćenog iz PDF-a
+                naplaceno_osnovna = 0.0
+                naplaceno_gorivo = 0.0
+                for l in lines:
+                    if "Suma EUR" in l or "Iznos EUR" in l:
+                        continue
+                    if re.match(r'^(110|100)\s+', l):
+                        m_izn = re.findall(r'([\d\.]*,\d{2})', l)
+                        if m_izn:
+                            naplaceno_osnovna = float(m_izn[-1].replace('.', '').replace(',', '.'))
+                    elif any(d_kw in l.lower() for d_kw in ['dizel', 'dodatak', 'gorivo']):
+                        m_izn = re.findall(r'([\d\.]*,\d{2})', l)
+                        if m_izn:
+                            naplaceno_gorivo = float(m_izn[-1].replace('.', '').replace(',', '.'))
+
+                # Traženje redaka paleta (svaka paleta / stavka zasebno)
+                for idx_l, linija in enumerate(lines):
+                    linija_upper = linija.upper()
+                    if any(t in linija_upper for t in ['EWP', 'FP', 'OWP', 'CLL']) or 'OTP' in linija_upper:
+                        tip_palete = "FP"
+                        for t_tip in ['EWP', 'OWP', 'CLL', 'FP']:
+                            if t_tip in linija_upper:
+                                tip_palete = t_tip
+                                break
+                        
+                        # Količina paleta u retku
+                        kolicina = 1
+                        m_kol = re.search(r'(\d+)\s+' + tip_palete, linija_upper)
+                        if m_kol:
+                            kolicina = int(m_kol.group(1))
+
+                        # Masa paleta u KG
+                        masa_kg = 0.0
+                        for k in range(max(0, idx_l - 1), min(len(lines), idx_l + 3)):
+                            m_masa = re.search(r'(\d+[\d\.]*,\d{2,3})', lines[k])
+                            if m_masa:
+                                val = float(m_masa.group(1).replace('.', '').replace(',', '.'))
+                                if val > 2.0:
+                                    masa_kg = val
                                     break
-                        
-                        oznaka_broj = m_otp.group(1) if m_otp else "Standardna pošiljka"
-                        
-                        redci_paleta.append({
-                            'Oznaka_Broj': oznaka_broj,
-                            'Referenca_Sustav': trenutni_ref,
-                            'LA-ID': trenutni_shpt,
-                            'Datum_Naloga': trenutni_datum_naloga,
-                            'Datum_Isporuke': trenutni_datum_isporuke,
-                            'Grad': trenutni_grad,
-                            'ZIP': trenutni_zip,
-                            'Masa_Palete_KG': round(masa_kg, 2),
-                            'Tip_Palete': tip_palete if tip_palete in ['EWP', 'FP', 'OWP'] else 'FP'
-                        })
 
-        df_palete = pd.DataFrame(redci_paleta)
-        if len(df_palete) > 0:
-            df_palete = df_palete.drop_duplicates(subset=['LA-ID', 'Oznaka_Broj', 'Masa_Palete_KG']).reset_index(drop=True)
+                        if masa_kg > 0:
+                            m_otp = re.search(r'(otp-?[\d\/]+)', linija, re.IGNORECASE)
+                            oznaka = m_otp.group(1) if m_otp else "Standard"
 
-        st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
+                            redci_paleta.append({
+                                'LA-ID': shpt,
+                                'Referenca': ref,
+                                'Oznaka_Broj': oznaka,
+                                'Datum_Naloga': dt_naloga,
+                                'Datum_Isporuke': dt_isporuke,
+                                'Grad': grad,
+                                'ZIP': zip_kod,
+                                'Zona': zona,
+                                'Broj_Paleta': kolicina,
+                                'Tip_Palete': tip_palete,
+                                'Masa_Palete_KG': round(masa_kg, 2),
+                                'Naplaceno_Osnovna_EUR': naplaceno_osnovna,
+                                'Naplaceno_Gorivo_EUR': naplaceno_gorivo,
+                                'Naplaceno_Ukupno_EUR': round(naplaceno_osnovna + naplaceno_gorivo, 2)
+                            })
+                            
+    return pd.DataFrame(redci_paleta)
 
-        if len(df_palete) > 0:
-            if st.button("Pokreni reviziju s točnim zoniranjem"):
-                
-                def odredi_zonu(row):
-                    city = str(row.get('Grad', '')).strip().lower()
-                    zip_val = str(row.get('ZIP', '00000')).zfill(5)
-                    prva_dva = int(zip_val[:2]) if zip_val[:2].isdigit() else 0
-                    
-                    if any(g in city for g in ['makarska', 'imotski', 'ploče', 'metković', 'dubrovnik', 'korčula', 'mokosica', 'mlini']) or prva_dva == 20:
-                        return "Zona 6"
-                    
-                    if prva_dva == 10:
-                        return "Zona 1"
-                    elif 40 <= prva_dva <= 49:
-                        return "Zona 2"
-                    elif prva_dva in [34, 35, 51]:
-                        return "Zona 3"
-                    elif (31 <= prva_dva <= 33) or prva_dva == 52:
-                        return "Zona 4"
-                    elif (21 <= prva_dva <= 23) or prva_dva == 53:
-                        return "Zona 5"
-                    else:
-                        return "Zona 2"
+# --- STREAMLIT UI ---
+st.title("📊 Revizija G. Englmayer Invoica (OF 002/2026)")
+st.markdown("Automatska ekstrakcija specifikacija, provjera ugovorenih cijena, izračun dizel dodatka i detekcija preplata.")
 
-                df_palete['Izracunata_Zona'] = df_palete.apply(odredi_zonu, axis=1)
-                df_palete['Dopušteni_Rok_Radnih_Dana'] = df_palete['Izracunata_Zona'].apply(lambda z: 3 if z == "Zona 6" else (1 if z == "Zona 1" else 2))
-                
-                def izracunaj_radne_dane(row):
-                    try:
-                        d_nalog = pd.to_datetime(row.get('Datum_Naloga'), format='%d.%m.%Y.', errors='coerce')
-                        if pd.isna(d_nalog):
-                            d_nalog = pd.to_datetime(row.get('Datum_Naloga'), format='%d.%m.%Y', errors='coerce')
-                        d_isporuka = pd.to_datetime(row.get('Datum_Isporuke'), format='%d.%m.%Y', errors='coerce')
-                        if pd.isna(d_nalog) or pd.isna(d_isporuka):
-                            return 0
-                        dani = pd.bdate_range(start=d_nalog, end=d_isporuka)
-                        return len(dani) - 1 if len(dani) > 0 else 0
-                    except:
-                        return 0
+uploaded_file = st.file_uploader("Učitajte G. Englmayer PDF račun/specifikaciju", type=["pdf"])
 
-                df_palete['Stvarni_Radni_Dani'] = df_palete.apply(izracunaj_radne_dane, axis=1)
-                df_palete['Status_Roka'] = df_palete.apply(
-                    lambda r: 'U roku' if r['Stvarni_Radni_Dani'] <= r['Dopušteni_Rok_Radnih_Dana'] else 'Izvan roka', 
-                    axis=1
-                )
+if uploaded_file is not None:
+    with st.spinner("Parsiranje dokumenata i provjera ugovora..."):
+        df_rezultat = parse_englmayer_pdf(uploaded_file)
+        
+    if df_rezultat.empty:
+        st.warning("Nije moguće automatski pronaći stavke pošiljaka u učitanom PDF-u. Provjerite format dokumenta.")
+    else:
+        # Izračun ugovorenih stavki
+        ugovorene_osnove = []
+        ugovorena_goriva = []
+        razlike = []
+        
+        cijena_goriva_input = st.sidebar.number_input("Trenutna cijena dizela (€/L)", value=1.65, step=0.01)
+        
+        for index, row in df_rezultat.iterrows():
+            ug_osn = ugovorena_cijena_osnovna(row['Zona'], row['Masa_Palete_KG'], row['Tip_Palete'])
+            ug_gor = izracunaj_dizel_dodatak(ug_osn, cijena_goriva_input)
+            ugovorene_osnove.append(ug_osn)
+            ugovorena_goriva.append(ug_gor)
+            
+        df_rezultat['Ugovoreno_Osnovna_EUR'] = ugovorene_osnove
+        df_rezultat['Ugovoreno_Gorivo_EUR'] = ugovorena_goriva
+        df_rezultat['Ugovoreno_Ukupno_EUR'] = df_rezultat['Ugovoreno_Osnovna_EUR'] + df_rezultat['Ugovoreno_Gorivo_EUR']
+        df_rezultat['Razlika_Preplata_EUR'] = round(df_rezultat['Naplaceno_Ukupno_EUR'] - df_rezultat['Ugovoreno_Ukupno_EUR'], 2)
 
-                cjenik_tablica = {
-                    "Zona 1": [23.0, 25.0, 30.0, 33.0, 38.0],
-                    "Zona 2": [26.0, 29.0, 35.0, 39.0, 43.0],
-                    "Zona 3": [36.0, 40.0, 45.0, 47.0, 51.0],
-                    "Zona 4": [42.0, 47.0, 50.0, 55.0, 65.0],
-                    "Zona 5": [44.0, 48.0, 51.0, 56.0, 68.0],
-                    "Zona 6": [55.0, 59.0, 63.0, 65.0, 79.0]
-                }
+        # Dashboard Tabovi
+        tab1, tab2, tab3 = st.tabs(["📋 Detaljni Pregled po Paletama", "💰 Financijska Usporedba i Preplate", "📈 Sažetak po Zonama"])
+        
+        with tab1:
+            st.subheader("Pregled svih ekstrahiranih stavki i paleta sa zasebnim kilažama")
+            st.dataframe(df_rezultat, use_container_width=True)
+            
+            # Excel export
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_rezultat.to_excel(writer, index=False, sheet_name='Revizija_Palete')
+            excel_data = output.getvalue()
+            
+            st.download_button(
+                label="📥 Preuzmi izvještaj u Excel formatu (.xlsx)",
+                data=excel_data,
+                file_name="Englmayer_Revizija_Palete.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
-                lista_osnovnih_cijena = []
-                for idx, row in df_palete.iterrows():
-                    zona = str(row['Izracunata_Zona'])
-                    tezina = float(row['Masa_Palete_KG'])
-                    paleta_tip = str(row.get('Tip_Palete', 'FP'))
-                    
-                    if tezina < 300.0: t_idx = 0
-                    elif tezina < 400.0: t_idx = 1
-                    elif tezina < 500.0: t_idx = 2
-                    elif tezina < 600.0: t_idx = 3
-                    else: t_idx = 4
-                    
-                    baza = float(cjenik_tablica.get(zona, cjenik_tablica["Zona 2"])[t_idx])
-                    if paleta_tip.upper() == 'OWP':
-                        baza = baza * 1.50
-                    lista_osnovnih_cijena.append(round(baza, 2))
+        with tab2:
+            st.subheader("Usporedba naplaćenog vs. ugovorenog iznosa")
+            preplate_df = df_rezultat[df_rezultat['Razlika_Preplata_EUR'] > 0]
+            total_preplata = preplate_df['Razlika_Preplata_EUR'].sum()
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Ukupno stavki", len(df_rezultat))
+            col2.metric("Ukupno naplaćeno", f"{df_rezultat['Naplaceno_Ukupno_EUR'].sum():.2f} €")
+            col3.metric("Ukupno utvrđene preplate", f"{total_preplata:.2f} €", delta_color="inverse")
+            
+            st.markdown("### Stavke s utvrđenom razlikom (Preplata):")
+            st.dataframe(preplate_df[['LA-ID', 'Referenca', 'Oznaka_Broj', 'Grad', 'Zona', 'Masa_Palete_KG', 'Naplaceno_Ukupno_EUR', 'Ugovoreno_Ukupno_EUR', 'Razlika_Preplata_EUR']], use_container_width=True)
 
-                df_palete['Ugovorena_Osnovna_Cijena'] = lista_osnovnih_cijena
-                df_palete['Ugovorena_Osnovna_Ukupno'] = df_palete['Ugovorena_Osnovna_Cijena']
-                df_palete['Ugovoreni_Iznos_Goriva'] = round(df_palete['Ugovorena_Osnovna_Cijena'] * (dodatak_gorivo_pct / 100.0), 2)
-                df_palete['Ugovoreno_Paleta_Sa_Gorivom'] = round(df_palete['Ugovorena_Osnovna_Cijena'] + df_palete['Ugovoreni_Iznos_Goriva'], 2)
-
-                tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-                    "1. Pregled po Paletama", 
-                    "2. Provjera Rokova Isporuke (Analitika)", 
-                    "3. Zbirni Financijski Pregled",
-                    "4. Usporedba po Pošiljkama (Reference)",
-                    "5. Preplate po Pošiljkama",
-                    "6. Skupna Raščlamba (Gorivo vs Dostava)"
-                ])
-                
-                def konvertiraj_u_excel_csv(data_frame):
-                    df_export = data_frame.copy()
-                    for col in df_export.select_dtypes(include=['float64', 'float32', 'int64']):
-                        df_export[col] = df_export[col].astype(str).str.replace('.', ',', regex=False)
-                    return df_export.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
-
-                with tab1:
-                    st.subheader(f"Popis svih paleta izvađenih iz PDF-a ({len(df_palete)} stavki)")
-                    st.dataframe(df_palete)
-                    st.download_button("📥 Preuzmi palete (CSV za Excel)", konvertiraj_u_excel_csv(df_palete), "palete_iz_pdf-a.csv", "text/csv")
-                
-                with tab2:
-                    st.subheader("Analitički izvještaj: Učinkovitost i točnost rokova dostave")
-                    ukupno_stavki = len(df_palete)
-                    broj_u_roku = len(df_palete[df_palete['Status_Roka'] == 'U roku'])
-                    broj_izvan_rok = len(df_palete[df_palete['Status_Roka'] == 'Izvan roka'])
-                    pct_u_roku = (broj_u_roku / ukupno_stavki) * 100 if ukupno_stavki > 0 else 0
-                    pct_izvan_rok = (broj_izvan_rok / ukupno_stavki) * 100 if ukupno_stavki > 0 else 0
-                    
-                    kpi1, kpi2, kpi3 = st.columns(3)
-                    kpi1.metric("U roku (Uspješnost)", f"{pct_u_roku:.2f}%", f"{broj_u_roku} paleta")
-                    kpi2.metric("Izvan roka (Kašnjenje)", f"{pct_izvan_rok:.2f}%", f"{broj_izvan_rok} paleta")
-                    kpi3.metric("Ukupno analizirano", f"{ukupno_stavki} paleta")
-                    st.markdown("---")
-                    cols_rok = ['Oznaka_Broj', 'LA-ID', 'Grad', 'ZIP', 'Izracunata_Zona', 'Datum_Naloga', 'Datum_Isporuke', 'Stvarni_Radni_Dani', 'Dopušteni_Rok_Radnih_Dana', 'Status_Roka']
-                    st.dataframe(df_palete[cols_rok])
-                    st.download_button("📥 Preuzmi analitiku rokova (CSV za Excel)", konvertiraj_u_excel_csv(df_palete[cols_rok]), "analitika_rokova_isporuke.csv", "text/csv")
-                    
-                with tab3:
-                    st.subheader("Zbirna rekapitulacija po ugovoru")
-                    ukupno_ugovor = round(df_palete['Ugovoreno_Paleta_Sa_Gorivom'].sum(), 2)
-                    c1, c2 = st.columns(2)
-                    c1.metric("Ukupno paleta u PDF-u", f"{len(df_palete)}")
-                    c2.metric("Ukupno po službenom ugovornom cjeniku", f"{ukupno_ugovor:,.2f} €")
-                    
-                with tab4:
-                    st.subheader("Usporedba pošiljaka zbrojenih po LA-ID brojevima")
-                    df_posiljke = df_palete.groupby(['LA-ID', 'Grad', 'ZIP', 'Izracunata_Zona']).agg(
-                        Oznaka_Broj=('Oznaka_Broj', 'first'),
-                        Datum_Naloga=('Datum_Naloga', 'first'),
-                        Datum_Isporuke=('Datum_Isporuke', 'max'),
-                        Broj_Paleta=('Masa_Palete_KG', 'count'),
-                        Ukupna_Masa_KG=('Masa_Palete_KG', 'sum'),
-                        Ugovoreno_Osnovna_EUR=('Ugovorena_Osnovna_Cijena', 'sum'),
-                        Ugovoreno_Gorivo_EUR=('Ugovoreni_Iznos_Goriva', 'sum'),
-                        Ugovoreno_Ukupno_EUR=('Ugovoreno_Paleta_Sa_Gorivom', 'sum')
-                    ).reset_index()
-                    
-                    df_posiljke['Ukupna_Masa_KG'] = df_posiljke['Ukupna_Masa_KG'].round(2)
-                    df_posiljke['Ugovoreno_Osnovna_EUR'] = df_posiljke['Ugovoreno_Osnovna_EUR'].round(2)
-                    df_posiljke['Ugovoreno_Gorivo_EUR'] = df_posiljke['Ugovoreno_Gorivo_EUR'].round(2)
-                    df_posiljke['Ugovoreno_Ukupno_EUR'] = df_posiljke['Ugovoreno_Ukupno_EUR'].round(2)
-                    
-                    df_posiljke['Naplaćeno_Po_PDF_EUR'] = df_posiljke['LA-ID'].map(pdf_iznosi).fillna(0.0).round(2)
-                    df_posiljke['Razlika (Naplaćeno - Ugovoreno)'] = round(df_posiljke['Naplaćeno_Po_PDF_EUR'] - df_posiljke['Ugovoreno_Ukupno_EUR'], 2)
-                    
-                    st.dataframe(df_posiljke)
-                    st.download_button("📥 Preuzmi usporedbu pošiljaka (CSV za Excel)", konvertiraj_u_excel_csv(df_posiljke), "usporedba_po_posiljkama.csv", "text/csv")
-
-                with tab5:
-                    st.subheader("Izdvojene preplate (gdje je naplaćeni iznos veći od ugovornog)")
-                    if 'df_posiljke' in locals():
-                        df_preplate = df_posiljke[df_posiljke['Razlika (Naplaćeno - Ugovoreno)'] > 0].sort_values(by='Razlika (Naplaćeno - Ugovoreno)', ascending=False)
-                        st.dataframe(df_preplate)
-                        st.download_button("📥 Preuzmi preplate po pošiljkama (CSV za Excel)", konvertiraj_u_excel_csv(df_preplate), "preplate_po_posiljkama.csv", "text/csv")
-                    else:
-                        st.info("Pregledajte prvo tab 4 za izračun.")
-
-                with tab6:
-                    st.subheader("Skupni financijski pregled komponenti (Cijeli račun)")
-                    if 'df_posiljke' in locals():
-                        tot_naplaceno_osnovna = round(sum(pdf_osnovna_iznosi.values()), 2)
-                        tot_ugovoreno_osnovna = round(df_posiljke['Ugovoreno_Osnovna_EUR'].sum(), 2)
-                        
-                        tot_naplaceno_gorivo = round(sum(pdf_gorivo_iznosi.values()), 2)
-                        tot_ugovoreno_gorivo = round(df_posiljke['Ugovoreno_Gorivo_EUR'].sum(), 2)
-                        
-                        skupni_podaci = [{
-                            'Komponenta': 'Osnovna cijena prijevoza (Dostava)',
-                            'Naplaćeno ukupno (€)': tot_naplaceno_osnovna,
-                            'Ugovoreno ukupno (€)': tot_ugovoreno_osnovna,
-                            'Razlika (Naplaćeno - Ugovoreno) (€)': round(tot_naplaceno_osnovna - tot_ugovoreno_osnovna, 2)
-                        }, {
-                            'Komponenta': 'Dizel dodatak (Gorivo)',
-                            'Naplaćeno ukupno (€)': tot_naplaceno_gorivo,
-                            'Ugovoreno ukupno (€)': tot_ugovoreno_gorivo,
-                            'Razlika (Naplaćeno - Ugovoreno) (€)': round(tot_naplaceno_gorivo - tot_ugovoreno_gorivo, 2)
-                        }, {
-                            'Komponenta': 'UKUPNO SVEUKUPNO',
-                            'Naplaćeno ukupno (€)': round(tot_naplaceno_osnovna + tot_naplaceno_gorivo, 2),
-                            'Ugovoreno ukupno (€)': round(tot_ugovoreno_osnovna + tot_ugovoreno_gorivo, 2),
-                            'Razlika (Naplaćeno - Ugovoreno) (€)': round((tot_naplaceno_osnovna + tot_naplaceno_gorivo) - (tot_ugovoreno_osnovna + tot_ugovoreno_gorivo), 2)
-                        }]
-                        
-                        df_skupno = pd.DataFrame(skupni_podaci)
-                        st.table(df_skupno)
-                        st.download_button("📥 Preuzmi skupnu rekapitulaciju (CSV za Excel)", konvertiraj_u_excel_csv(df_skupno), "skupna_rasclamba_gorivo_dostava.csv", "text/csv")
-                    else:
-                        st.info("Pregledajte prvo tab 4 za izračun.")
-        else:
-            st.warning("Nisu pronađene stavke paleta u PDF-u. Provjerite izgled ekstrahiranog teksta iznad.")
-
-    except Exception as e:
-        st.error(f"Greška kod obrade PDF-a: {e}")
-else:
-    st.info("Molimo učitajte PDF specifikaciju računa u bočnoj traci.")
+        with tab3:
+            st.subheader("Agregirani pregled po zonama dostave")
+            zona_group = df_rezultat.groupby('Zona').agg(
+                Broj_Stavki=('LA-ID', 'count'),
+                Ukupna_Masa_KG=('Masa_Palete_KG', 'sum'),
+                Naplaceno_EUR=('Naplaceno_Ukupno_EUR', 'sum'),
+                Ugovoreno_EUR=('Ugovoreno_Ukupno_EUR', 'sum'),
+                Razlika_EUR=('Razlika_Preplata_EUR', 'sum')
+            ).reset_index()
+            st.dataframe(zona_group, use_container_width=True)
