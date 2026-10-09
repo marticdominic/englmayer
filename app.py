@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s robusnim parsiranjem tablica i pariteta iz novog formata PDF-a.")
+st.markdown("Direktna analiza s ispravljenim izračunom cijena paleta i mapiranjem gradova.")
 
 # Sveobuhvatni službeni rječnik hrvatskih gradova i poštanskih brojeva
 HR_GRADOVI_ZIP = {
@@ -116,9 +116,7 @@ if uploaded_pdf is not None:
             
             p_nalog_tekst = b_meta + b_sadrzaj
             
-            # Fleksibilnije traženje meta podataka u bloku
             m_datum = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4}\.)', p_nalog_tekst)
-            m_shpt = re.search(r'Pošiljka:\s*([^\s]+)', p_nalog_tekst)
             m_epid = re.search(r'LA-ID:\s*(EP-\d+)', p_nalog_tekst)
             
             if not m_epid:
@@ -172,10 +170,9 @@ if uploaded_pdf is not None:
                         trenutni_zip = int(z_val)
                         break
 
-            # PARSIRANJE PALETA (podržava linije s | i razmacima)
+            # PARSIRANJE PALETA
             for line in p_nalog_tekst.split('\n'):
                 line_clean = line.strip()
-                # Tražimo linije koje sadrže tipove paleta EWP, FP ili CLL/Handelsware
                 if any(tip in line_clean.upper() for tip in ['EWP', 'FP', 'CLL']):
                     parts = [p.strip() for p in line_clean.split('|')]
                     if len(parts) >= 4:
@@ -186,7 +183,6 @@ if uploaded_pdf is not None:
                             kolicina = 1
                         tip_palete = parts[2].upper() if len(parts) > 2 else "FP"
                         
-                        # Tražimo masu u dijelu teksta
                         masa_match = re.search(r'([\d\.]+,\d{2})', line_clean)
                         if masa_match:
                             try:
@@ -254,8 +250,8 @@ if uploaded_pdf is not None:
             )
 
             def ugovorena_cijena_palete(row):
-                zona = row['Izracunata_Zona']
-                tezina = row['Masa_Palete_KG']
+                zona = str(row['Izracunata_Zona'])
+                tezina = float(row['Masa_Palete_KG'])
                 paleta_tip = str(row.get('Tip_Palete', 'FP'))
                 
                 cjenik = {
@@ -273,13 +269,14 @@ if uploaded_pdf is not None:
                 elif tezina < 600.0: t_idx = 3
                 else: t_idx = 4
                 
-                baza = cjenik.get(zona, cjenik["Zona 2"])[t_idx]
+                baza = float(cjenik.get(zona, cjenik["Zona 2"])[t_idx])
                 if paleta_tip.upper() == 'OWP':
                     baza = baza * 1.50
-                return round(baza, 2)
+                return float(round(baza, 2))
 
+            # Primjena funkcije uz vraćanje čistog skalara
             df_palete['Ugovorena_Osnovna_Cijena'] = df_palete.apply(ugovorena_cijena_palete, axis=1)
-            df_palete['Ugovorena_Osnovna_Ukupno'] = round(df_palete['Ugovorena_Osnovna_Cijena'], 2)
+            df_palete['Ugovorena_Osnovna_Ukupno'] = df_palete['Ugovorena_Osnovna_Cijena']
             df_palete['Ugovoreni_Iznos_Goriva'] = round(df_palete['Ugovorena_Osnovna_Cijena'] * (dodatak_gorivo_pct / 100.0), 2)
             df_palete['Ugovoreno_Paleta_Sa_Gorivom'] = round(df_palete['Ugovorena_Osnovna_Cijena'] + df_palete['Ugovoreni_Iznos_Goriva'], 2)
 
@@ -335,7 +332,7 @@ if uploaded_pdf is not None:
                     Datum_Isporuke=('Datum_Isporuke', 'max'),
                     Broj_Paleta=('Masa_Palete_KG', 'count'),
                     Ukupna_Masa_KG=('Masa_Palete_KG', 'sum'),
-                    Ugovoreno_Osnovna_EUR=('Ugovoreno_Osnovna_Ukupno', 'sum'),
+                    Ugovoreno_Osnovna_EUR=('Ugovorena_Osnovna_Cijena', 'sum'),
                     Ugovoreno_Gorivo_EUR=('Ugovoreni_Iznos_Goriva', 'sum'),
                     Ugovoreno_Ukupno_EUR=('Ugovoreno_Paleta_Sa_Gorivom', 'sum')
                 ).reset_index()
