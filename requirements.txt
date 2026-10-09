@@ -1,6 +1,6 @@
-streamlit
-pandas
-matplotlib
-pdfplumber
-pdf2image
-pytesseract
+streamlit>=1.30.0
+pandas>=2.0.0
+pdfplumber>=0.10.0
+openpyxl>=3.1.0
+pdf2image>=1.16.3
+pytesseract>=0.3.10
