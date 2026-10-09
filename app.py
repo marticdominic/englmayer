@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s robusnim izračunom cijena paleta i mapiranjem gradova.")
+st.markdown("Direktna analiza s ispravljenim grupiranjem i izračunom pošiljaka.")
 
 # Sveobuhvatni službeni rječnik hrvatskih gradova i poštanskih brojeva
 HR_GRADOVI_ZIP = {
@@ -249,7 +249,7 @@ if uploaded_pdf is not None:
                 axis=1
             )
 
-            # SIGURAN IZRAČUN CIJENA PUTEM PETLJE (BEZ .apply Koji Može Zbuniti Pandas)
+            # SIGURAN IZRAČUN CIJENA PUTEM PETLJE
             cjenik_tablica = {
                 "Zona 1": [23.0, 25.0, 30.0, 33.0, 38.0],
                 "Zona 2": [26.0, 29.0, 35.0, 39.0, 43.0],
@@ -328,7 +328,9 @@ if uploaded_pdf is not None:
                 
             with tab4:
                 st.subheader("Usporedba pošiljaka zbrojenih po LA-ID brojevima")
-                df_posiljke = df_palete.groupby(['LA-ID', 'Oznaka_Broj', 'Grad', 'ZIP', 'Izracunata_Zona']).agg(
+                # Ispravljeno grupiranje bez suvišnih ključeva
+                df_posiljke = df_palete.groupby(['LA-ID', 'Grad', 'ZIP', 'Izracunata_Zona']).agg(
+                    Oznaka_Broj=('Oznaka_Broj', 'first'),
                     Datum_Naloga=('Datum_Naloga', 'first'),
                     Datum_Isporuke=('Datum_Isporuke', 'max'),
                     Broj_Paleta=('Masa_Palete_KG', 'count'),
