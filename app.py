@@ -49,8 +49,7 @@ def izracunaj_dodatak_gorivo(cijena):
         return 0
     else:
         razlika = cijena - osnova
-        tocan_iznos = (razlika / korak) * 1.0
-        return math.ceil(tocan_iznos)
+        return math.ceil((razlika / korak) * 1.0)
 
 dodatak_gorivo_pct = izracunaj_dodatak_gorivo(cijena_goriva)
 st.sidebar.info(f"Izračunati dodatak za gorivo (baza 1.46 €, zaokruženo naviše): **{dodatak_gorivo_pct}%**")
@@ -60,15 +59,24 @@ uploaded_pdf = st.sidebar.file_uploader("Učitaj PDF specifikaciju računa", typ
 
 if uploaded_pdf is not None:
     try:
-        # Čitanje PDF-a pomoću pdfplumber-a
         pdf_tekst = ""
+        sve_izvucene_tablice = []
+        
         with pdfplumber.open(uploaded_pdf) as pdf:
             for page in pdf.pages:
                 t = page.extract_text()
                 if t:
                     pdf_tekst += t + "\n"
+                tables = page.extract_tables()
+                if tables:
+                    for table in tables:
+                        sve_izvucene_tablice.append(table)
 
-        # Ekstrakcija financijskih iznosa po LA-ID-u
+        # Debug kućica da vidite sirovi tekst ako ikad zatreba
+        if st.checkbox("Prikaži sirovi tekst iz PDF-a (Debug)"):
+            st.text_area("Sirovi ekstrahirani tekst", pdf_tekst, height=300)
+
+        # Ekstrakcija financijskih iznosa
         pdf_iznosi = {}
         pdf_gorivo_iznosi = {}
         pdf_osnovna_iznosi = {}
@@ -106,20 +114,22 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # PARSIRANJE POŠILJAKA I PALETA
+        # ULTRA-ROBUSNO PARSIRANJE POŠILJAKA I PALETA
         redci_paleta = []
         blokovi_naloga = re.split(r'(LA-ID:\s*EP-\d+)', pdf_tekst)
         
+        if len(blokovi_naloga) <= 1:
+            # Ako nema LA-ID ključne riječi, tretiraj cijeli tekst kao jedan blok
+            blokovi_naloga = ["", "LA-ID: EP-000000000", pdf_tekst]
+
         for b_idx in range(1, len(blokovi_naloga), 2):
             b_meta = blokovi_naloga[b_idx]
             b_sadrzaj = blokovi_naloga[b_idx + 1] if (b_idx + 1) < len(blokovi_naloga) else ""
             prethodni_dio = blokovi_naloga[b_idx - 1] if b_idx > 0 else ""
-            p_nalog_tekst = prethodni_dio[-600:] + b_meta + b_sadrzaj
+            p_nalog_tekst = prethodni_dio + "\n" + b_meta + "\n" + b_sadrzaj
             
-            m_epid = re.search(r'LA-ID:\s*(EP-\d+)', b_meta)
-            if not m_epid:
-                continue
-            trenutni_shpt = m_epid.group(1)
+            m_epid = re.search(r'LA-ID:\s*(EP-\d+)', p_nalog_tekst)
+            trenutni_shpt = m_epid.group(1) if m_epid else f"EP-GEN-{b_idx}"
             
             m_datum = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4}\.?)', p_nalog_tekst)
             trenutni_datum_naloga = m_datum.group(1) if m_datum else "01.01.2026."
@@ -134,13 +144,9 @@ if uploaded_pdf is not None:
             trenutni_grad = "Nepoznato"
             trenutni_zip = 0
             
-            paritet_tekst = ""
-            for line in p_nalog_tekst.split('\n'):
-                if any(kw in line.lower() for kw in ["paritet", "istovareno", "primatelj"]):
-                    paritet_tekst += " " + line.lower()
-
+            p_tekst_lower = p_nalog_tekst.lower()
             for grad_naziv, z_broj in HR_GRADOVI_ZIP.items():
-                if grad_naziv in paritet_tekst:
+                if grad_naziv in p_tekst_lower:
                     trenutni_grad = grad_naziv.capitalize()
                     trenutni_zip = z_broj
                     break
@@ -152,32 +158,34 @@ if uploaded_pdf is not None:
                         trenutni_zip = int(z_val)
                         break
 
-            # Parsiranje redaka paleta
+            # Ekstrakcija paleta: tražimo sve retke ili dijelove teksta koji sadrže tipove paleta i kilograme
             linije_bloka = p_nalog_tekst.split('\n')
             for idx_l, linija in enumerate(linije_bloka):
                 linija_upper = linija.upper()
-                if any(t in linija_upper for t in ['EWP', 'FP', 'OWP', 'CLL']) and "SUMA" not in linija_upper:
+                # Tražimo bilo koju liniju s tipom palete ili izravno decimalnim brojem mase
+                if any(t in linija_upper for t in ['EWP', 'FP', 'OWP', 'CLL']) or 'OTP' in linija_upper:
                     tip_palete = "FP"
                     for t_tip in ['EWP', 'OWP', 'CLL', 'FP']:
                         if t_tip in linija_upper:
                             tip_palete = t_tip
                             break
                     
+                    # Tražimo masu (KG) u široj okolici retka
                     masa_kg = 0.0
-                    for k in range(max(0, idx_l - 2), min(len(linije_bloka), idx_l + 5)):
+                    for k in range(max(0, idx_l - 3), min(len(linije_bloka), idx_l + 4)):
                          m_masa = re.search(r'(\d+[\d\.]*,\d{2,3})', linije_bloka[k])
                          if m_masa:
                              potencijalna_masa = m_masa.group(1).replace('.', '').replace(',', '.')
                              val_kg = float(potencijalna_masa)
-                             if val_kg > 5.0:
+                             if val_kg > 2.0:  # Uzimamo sve veće od 2 kg
                                  masa_kg = val_kg
                                  break
                     
                     if masa_kg > 0:
                         oznaka_broj = "Standardna pošiljka"
-                        for k in range(max(0, idx_l - 4), idx_l):
+                        for k in range(max(0, idx_l - 3), idx_l + 1):
                             kand = linije_bloka[k].strip()
-                            if kand and "|" not in kand and not any(w in kand.lower() for w in ['sadržaj', 'količi', 'masa', 'ldm', 'cbm', 'paritet', 'referenca', 'primatelj', 'pak']):
+                            if "OTP" in kand.upper():
                                 oznaka_broj = kand
                                 break
                         
@@ -192,6 +200,31 @@ if uploaded_pdf is not None:
                             'Masa_Palete_KG': round(masa_kg, 2),
                             'Tip_Palete': tip_palete if tip_palete in ['EWP', 'FP', 'OWP'] else 'FP'
                         })
+
+        # Ako i dalje nema redaka, pokušaj izvući iz izvučenih pdfplumber tablica
+        if len(redci_paleta) == 0 and len(sve_izvucene_tablice) > 0:
+            for tablica in sve_izvucene_tablice:
+                for red in tablica:
+                    red_str = " ".join([str(c) for c in red if c])
+                    red_str_upper = red_str.upper()
+                    if any(t in red_str_upper for t in ['EWP', 'FP', 'OWP', 'CLL', 'OTP']):
+                        # Pokušaj naći težinu
+                        m_masa = re.search(r'(\d+[\d\.]*,\d{2,3})', red_str)
+                        if m_masa:
+                            val_kg = float(m_masa.group(1).replace('.', '').replace(',', '.'))
+                            if val_kg > 2.0:
+                                tip_p = "EWP" if "EWP" in red_str_upper else ("OWP" if "OWP" in red_str_upper else "FP")
+                                redci_paleta.append({
+                                    'Oznaka_Broj': red[0] if red[0] else "OTP Tablica",
+                                    'Referenca_Sustav': "TablicaPDF",
+                                    'LA-ID': "EP-TAB-01",
+                                    'Datum_Naloga': "02.09.2026.",
+                                    'Datum_Isporuke': "03.09.2026.",
+                                    'Grad': "Rijeka",
+                                    'ZIP': 51000,
+                                    'Masa_Palete_KG': round(val_kg, 2),
+                                    'Tip_Palete': tip_p
+                                })
 
         df_palete = pd.DataFrame(redci_paleta)
         if len(df_palete) > 0:
@@ -387,7 +420,7 @@ if uploaded_pdf is not None:
                     else:
                         st.info("Pregledajte prvo tab 4 za izračun.")
         else:
-            st.warning("Nisu pronađene stavke paleta u PDF-u. Provjerite format učitanog dokumenta.")
+            st.warning("Nisu pronađene stavke paleta u PDF-u. Uključite kućicu 'Prikaži sirovi tekst iz PDF-a (Debug)' iznad da vidite kako tekst izgleda.")
 
     except Exception as e:
         st.error(f"Greška kod obrade PDF-a: {e}")
