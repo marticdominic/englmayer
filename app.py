@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s ispravljenim grupiranjem i izračunom pošiljaka.")
+st.markdown("Direktna analiza s preciznim čitanjem zaglavlja, pariteta i tablica iz PDF specifikacija.")
 
 # Sveobuhvatni službeni rječnik hrvatskih gradova i poštanskih brojeva
 HR_GRADOVI_ZIP = {
@@ -35,7 +35,7 @@ HR_GRADOVI_ZIP = {
     'brinje': 53260, 'solin': 21210, 'banjole': 52100, 'macinec': 40306, 'čepin': 31431,
     'cepin': 31431, 'oklaj': 22303, 'novalja': 53291, 'kneževi vinogradi': 31309, 
     'knezevi vinogradi': 31309, 'satnica đakovačka': 31421, 'satnica djakovacka': 31421,
-    'kastel stafilic': 21217, 'kaštel stafilić': 21217
+    'kastel stafilic': 21217, 'kaštel stafilić': 21217, 'cepin': 31431
 }
 
 # Sidebar - Parametri obračuna
@@ -106,7 +106,7 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. ROBUSTNO PARSIRANJE POŠILJAKA IZ NOVOG FORMATA
+        # 2. PARSIRANJE POŠILJAKA IZ PDF-a
         redci_paleta = []
         blokovi_naloga = re.split(r'(Datum naloga:\s*\d{2}\.\d{2}\.\d{4}\.)', pdf_tekst)
         
@@ -170,7 +170,7 @@ if uploaded_pdf is not None:
                         trenutni_zip = int(z_val)
                         break
 
-            # PARSIRANJE PALETA
+            # PARSIRANJE PALETA IZ TABLICE
             for line in p_nalog_tekst.split('\n'):
                 line_clean = line.strip()
                 if any(tip in line_clean.upper() for tip in ['EWP', 'FP', 'CLL']):
@@ -249,7 +249,7 @@ if uploaded_pdf is not None:
                 axis=1
             )
 
-            # SIGURAN IZRAČUN CIJENA PUTEM PETLJE
+            # IZRAČUN CIJENA PUTEM PETLJE
             cjenik_tablica = {
                 "Zona 1": [23.0, 25.0, 30.0, 33.0, 38.0],
                 "Zona 2": [26.0, 29.0, 35.0, 39.0, 43.0],
@@ -328,7 +328,6 @@ if uploaded_pdf is not None:
                 
             with tab4:
                 st.subheader("Usporedba pošiljaka zbrojenih po LA-ID brojevima")
-                # Ispravljeno grupiranje bez suvišnih ključeva
                 df_posiljke = df_palete.groupby(['LA-ID', 'Grad', 'ZIP', 'Izracunata_Zona']).agg(
                     Oznaka_Broj=('Oznaka_Broj', 'first'),
                     Datum_Naloga=('Datum_Naloga', 'first'),
