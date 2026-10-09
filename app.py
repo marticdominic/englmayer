@@ -157,7 +157,7 @@ if uploaded_pdf is not None:
             # Čitanje tablice paleta (Oznaka/Broj, Količi, Pak., Masa)
             linije_bloka = p_nalog_tekst.split('\n')
             for idx_l, linija in enumerate(linije_bloka):
-                linija_ upper = linija.upper()
+                linija_upper = linija.upper()
                 if any(t in linija_upper for t in ['EWP', 'FP', 'OWP', 'CLL']) and "SUMA" not in linija_upper:
                     tip_palete = "FP"
                     for t_tip in ['EWP', 'OWP', 'CLL', 'FP']:
