@@ -35,7 +35,7 @@ HR_GRADOVI_ZIP = {
     'brinje': 53260, 'solin': 21210, 'banjole': 52100, 'macinec': 40306, 'čepin': 31431,
     'cepin': 31431, 'oklaj': 22303, 'novalja': 53291, 'kneževi vinogradi': 31309, 
     'knezevi vinogradi': 31309, 'satnica đakovačka': 31421, 'satnica djakovacka': 31421,
-    'kastel stafilic': 21217, 'kaštel stafilić': 21217, 'cepin': 31431
+    'kastel stafilic': 21217, 'kaštel stafilić': 21217
 }
 
 # Sidebar - Parametri obračuna
