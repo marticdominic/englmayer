@@ -1,5 +1,6 @@
-pdfplumber>=0.10.0
-pandas
 streamlit
-pypdf
+pandas
 matplotlib
+pdfplumber
+pdf2image
+pytesseract
