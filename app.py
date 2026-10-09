@@ -19,7 +19,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza specifikacija računa s podrškom za skenirane PDF dokumente (OCR).")
+st.markdown("Direktna analiza specifikacija računa s naprednim čišćenjem paleta i OCR podrškom.")
 
 # Sveobuhvatni službeni rječnik hrvatskih gradova i poštanskih brojeva
 HR_GRADOVI_ZIP = {
@@ -68,24 +68,22 @@ if uploaded_pdf is not None:
         pdf_bytes = uploaded_pdf.read()
         pdf_tekst = ""
         
-        # 1. Pokušaj čitanja teksta preko pdfplumber-a
+        # Čitanje preko pdfplumber-a
         with pdfplumber.open(uploaded_pdf) as pdf:
             for page in pdf.pages:
                 t = page.extract_text()
                 if t:
                     pdf_tekst += t + "\n"
         
-        # 2. Ako je tekst prazan, a dostupni su OCR alati, primjeni Tesseract OCR
+        # OCR fallback ako nema tekstualnog sloja
         if not pdf_tekst.strip() and OCR_AVAILABLE:
-            st.info("Dokument ne sadrži tekstualni sloj (skenirani PDF). Pokrećem OCR prepoznavanje teksta...")
+            st.info("Skenirani PDF u tijeku obrade (OCR)...")
             images = convert_from_bytes(pdf_bytes)
             for img in images:
                 ocr_text = pytesseract.image_to_string(img, lang='hrv+eng')
                 pdf_tekst += ocr_text + "\n"
-        elif not pdf_tekst.strip() and not OCR_AVAILABLE:
-            st.warning("Učitani PDF je skenirana slika, ali OCR paketi nisu instalirani. Molimo provjerite format dokumenta.")
 
-        st.text_area("Sirovi ekstrahirani tekst (Debug)", pdf_tekst, height=200)
+        st.text_area("Sirovi ekstrahirani tekst (Debug)", pdf_tekst, height=150)
 
         # Ekstrakcija financijskih iznosa
         pdf_iznosi = {}
@@ -125,7 +123,7 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # PARSIRANJE POŠILJAKA I PALETA
+        # PARSIRANJE POŠILJAKA I PALETA S ČIŠĆENJEM OZNAKA
         redci_paleta = []
         blokovi_naloga = re.split(r'(LA-ID:\s*EP-\d+)', pdf_tekst)
         
@@ -189,12 +187,16 @@ if uploaded_pdf is not None:
                                  break
                     
                     if masa_kg > 0:
-                        oznaka_broj = "Standardna pošiljka"
-                        for k in range(max(0, idx_l - 3), idx_l + 1):
-                            kand = linije_bloka[k].strip()
-                            if "OTP" in kand.upper():
-                                oznaka_broj = kand
-                                break
+                        puni_redak = linija.strip()
+                        m_otp = re.search(r'(otp-[\d\/]+)', puni_redak, re.IGNORECASE)
+                        if not m_otp:
+                            # Pokušaj šireg traženja OTP-a u okolnim redcima
+                            for k in range(max(0, idx_l - 2), idx_l + 1):
+                                m_otp = re.search(r'(otp-[\d\/]+)', linije_bloka[k], re.IGNORECASE)
+                                if m_otp:
+                                    break
+                        
+                        oznaka_broj = m_otp.group(1) if m_otp else "Standardna pošiljka"
                         
                         redci_paleta.append({
                             'Oznaka_Broj': oznaka_broj,
