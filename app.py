@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza specifikacija računa pomoću naprednog PDF parsera (pdfplumber).")
+st.markdown("Direktna analiza specifikacija računa pomoću naprednog pdfplumber parsera tablica.")
 
 # Sveobuhvatni službeni rječnik hrvatskih gradova i poštanskih brojeva
 HR_GRADOVI_ZIP = {
@@ -60,19 +60,15 @@ uploaded_pdf = st.sidebar.file_uploader("Učitaj PDF specifikaciju računa", typ
 
 if uploaded_pdf is not None:
     try:
-        # Čitanje PDF-a s pdfplumber (ekstrakcija teksta i tablica)
+        # Čitanje PDF-a pomoću pdfplumber-a
         pdf_tekst = ""
         with pdfplumber.open(uploaded_pdf) as pdf:
             for page in pdf.pages:
                 t = page.extract_text()
                 if t:
                     pdf_tekst += t + "\n"
-        
-        # Debug prekidač da vidite sirovi tekst ako ikad zatreba
-        if st.checkbox("Prikaži sirovi tekst iz PDF-a (Debug)"):
-            st.text_area("Sirovi ekstrahirani tekst", pdf_tekst, height=300)
 
-        # Ekstrakcija financijskih iznosa
+        # Ekstrakcija financijskih iznosa po LA-ID-u
         pdf_iznosi = {}
         pdf_gorivo_iznosi = {}
         pdf_osnovna_iznosi = {}
@@ -125,15 +121,12 @@ if uploaded_pdf is not None:
                 continue
             trenutni_shpt = m_epid.group(1)
             
-            # Datum naloga
             m_datum = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4}\.?)', p_nalog_tekst)
             trenutni_datum_naloga = m_datum.group(1) if m_datum else "01.01.2026."
             
-            # Referenca
             m_ref = re.search(r'Referenca:\s*([^\s]+)', p_nalog_tekst)
             trenutni_ref = m_ref.group(1) if m_ref else "N/A"
             
-            # Datum isporuke
             m_isporuka = re.search(r'Datum isporuke:\s*(\d{2}\.\d{2}\.\d{4})', p_nalog_tekst)
             trenutni_datum_isporuke = m_isporuka.group(1) if m_isporuka else None
 
@@ -159,7 +152,7 @@ if uploaded_pdf is not None:
                         trenutni_zip = int(z_val)
                         break
 
-            # Fleksibilno traženje redaka paleta (bilo koja linija koja sadrži EWP, FP, OWP ili CLL i broj s težinom)
+            # Parsiranje redaka paleta
             linije_bloka = p_nalog_tekst.split('\n')
             for idx_l, linija in enumerate(linije_bloka):
                 linija_upper = linija.upper()
@@ -176,7 +169,7 @@ if uploaded_pdf is not None:
                          if m_masa:
                              potencijalna_masa = m_masa.group(1).replace('.', '').replace(',', '.')
                              val_kg = float(potencijalna_masa)
-                             if val_kg > 5.0:  # Izbjegavamo CBM, tražimo kilograme
+                             if val_kg > 5.0:
                                  masa_kg = val_kg
                                  break
                     
@@ -394,7 +387,7 @@ if uploaded_pdf is not None:
                     else:
                         st.info("Pregledajte prvo tab 4 za izračun.")
         else:
-            st.warning("Nisu pronađene stavke paleta u PDF-u. Uključite kućicu 'Prikaži sirovi tekst iz PDF-a (Debug)' iznad da vidite kako vaš PDF ispisuje tekst.")
+            st.warning("Nisu pronađene stavke paleta u PDF-u. Provjerite format učitanog dokumenta.")
 
     except Exception as e:
         st.error(f"Greška kod obrade PDF-a: {e}")
