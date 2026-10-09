@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s ispravljenim izračunom cijena paleta i mapiranjem gradova.")
+st.markdown("Direktna analiza s robusnim izračunom cijena paleta i mapiranjem gradova.")
 
 # Sveobuhvatni službeni rječnik hrvatskih gradova i poštanskih brojeva
 HR_GRADOVI_ZIP = {
@@ -249,19 +249,21 @@ if uploaded_pdf is not None:
                 axis=1
             )
 
-            def ugovorena_cijena_palete(row):
+            # SIGURAN IZRAČUN CIJENA PUTEM PETLJE (BEZ .apply Koji Može Zbuniti Pandas)
+            cjenik_tablica = {
+                "Zona 1": [23.0, 25.0, 30.0, 33.0, 38.0],
+                "Zona 2": [26.0, 29.0, 35.0, 39.0, 43.0],
+                "Zona 3": [36.0, 40.0, 45.0, 47.0, 51.0],
+                "Zona 4": [42.0, 47.0, 50.0, 55.0, 65.0],
+                "Zona 5": [44.0, 48.0, 51.0, 56.0, 68.0],
+                "Zona 6": [55.0, 59.0, 63.0, 65.0, 79.0]
+            }
+
+            lista_osnovnih_cijena = []
+            for idx, row in df_palete.iterrows():
                 zona = str(row['Izracunata_Zona'])
                 tezina = float(row['Masa_Palete_KG'])
                 paleta_tip = str(row.get('Tip_Palete', 'FP'))
-                
-                cjenik = {
-                    "Zona 1": [23.0, 25.0, 30.0, 33.0, 38.0],
-                    "Zona 2": [26.0, 29.0, 35.0, 39.0, 43.0],
-                    "Zona 3": [36.0, 40.0, 45.0, 47.0, 51.0],
-                    "Zona 4": [42.0, 47.0, 50.0, 55.0, 65.0],
-                    "Zona 5": [44.0, 48.0, 51.0, 56.0, 68.0],
-                    "Zona 6": [55.0, 59.0, 63.0, 65.0, 79.0]
-                }
                 
                 if tezina < 300.0: t_idx = 0
                 elif tezina < 400.0: t_idx = 1
@@ -269,13 +271,12 @@ if uploaded_pdf is not None:
                 elif tezina < 600.0: t_idx = 3
                 else: t_idx = 4
                 
-                baza = float(cjenik.get(zona, cjenik["Zona 2"])[t_idx])
+                baza = float(cjenik_tablica.get(zona, cjenik_tablica["Zona 2"])[t_idx])
                 if paleta_tip.upper() == 'OWP':
                     baza = baza * 1.50
-                return float(round(baza, 2))
+                lista_osnovnih_cijena.append(round(baza, 2))
 
-            # Primjena funkcije uz vraćanje čistog skalara
-            df_palete['Ugovorena_Osnovna_Cijena'] = df_palete.apply(ugovorena_cijena_palete, axis=1)
+            df_palete['Ugovorena_Osnovna_Cijena'] = lista_osnovnih_cijena
             df_palete['Ugovorena_Osnovna_Ukupno'] = df_palete['Ugovorena_Osnovna_Cijena']
             df_palete['Ugovoreni_Iznos_Goriva'] = round(df_palete['Ugovorena_Osnovna_Cijena'] * (dodatak_gorivo_pct / 100.0), 2)
             df_palete['Ugovoreno_Paleta_Sa_Gorivom'] = round(df_palete['Ugovorena_Osnovna_Cijena'] + df_palete['Ugovoreni_Iznos_Goriva'], 2)
