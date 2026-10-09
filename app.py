@@ -85,7 +85,7 @@ if uploaded_pdf is not None:
 
         st.text_area("Sirovi ekstrahirani tekst (Debug)", pdf_tekst, height=150)
 
-        # Ekstrakcija financijskih iznosa
+        # FLEKSIBILNA EKSTRAKCIJA FINANCIJSKIH IZNOSA
         pdf_iznosi = {}
         pdf_gorivo_iznosi = {}
         pdf_osnovna_iznosi = {}
@@ -114,12 +114,15 @@ if uploaded_pdf is not None:
                         except:
                             pass
 
-            match = re.search(r'(EP-\d+)\s+(\d{2}\.\d{2}\.\d{4}\.)\s+(\d+)?\s*(\d+%\s+)?([\d\.,]+)', line)
-            if match:
-                shpt_id = match.group(1)
-                amount_str = match.group(5).replace('.', '').replace(',', '.')
+            # Fleksibilno traženje ukupnog iznosa pošiljke u liniji koja sadrži EP- broj
+            m_red_iznos = re.search(r'(EP-\d+).*?([\d\.]+,\d{2})', line)
+            if m_red_iznos:
+                shpt_id = m_red_iznos.group(1)
+                amount_str = m_red_iznos.group(2).replace('.', '').replace(',', '.')
                 try:
-                    pdf_iznosi[shpt_id] = round(float(amount_str), 2)
+                    val_iznos = float(amount_str)
+                    if val_iznos > 0:
+                        pdf_iznosi[shpt_id] = round(val_iznos, 2)
                 except:
                     pass
 
@@ -190,7 +193,6 @@ if uploaded_pdf is not None:
                         puni_redak = linija.strip()
                         m_otp = re.search(r'(otp-[\d\/]+)', puni_redak, re.IGNORECASE)
                         if not m_otp:
-                            # Pokušaj šireg traženja OTP-a u okolnim redcima
                             for k in range(max(0, idx_l - 2), idx_l + 1):
                                 m_otp = re.search(r'(otp-[\d\/]+)', linije_bloka[k], re.IGNORECASE)
                                 if m_otp:
