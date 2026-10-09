@@ -20,6 +20,8 @@ def odrediti_zonu(zip_str):
     if not zip_str:
         return "Zona 3"
     z_clean = str(zip_str).strip()
+    if not z_clean.isdigit() or len(z_clean) < 5:
+        return "Zona 3"
     prva_znam = z_clean[0]
     if prva_znam in ['1', '4']:
         return "Zona 1"
@@ -71,14 +73,12 @@ def ekstrahiraj_tekst_iz_datoteke(uploaded_file):
     sav_tekst = ""
     
     if file_extension == 'pdf':
-        # Prvo pokušaj čitati tekstualni sloj preko pdfplumber
         with pdfplumber.open(uploaded_file) as pdf:
             for page in pdf.pages:
                 t = page.extract_text()
                 if t and len(t.strip()) > 50:
                     sav_tekst += t + "\n--- STRANICA ---\n"
         
-        # Ako je PDF skeniran (nema tekstualnog sloja), pokreni OCR preko pdf2image
         if not sav_tekst.strip():
             uploaded_file.seek(0)
             images = pdf2image.convert_from_bytes(uploaded_file.read())
@@ -86,7 +86,6 @@ def ekstrahiraj_tekst_iz_datoteke(uploaded_file):
                 ocr_t = pytesseract.image_to_string(img, lang='hrv+eng')
                 sav_tekst += ocr_t + "\n--- STRANICA OCR ---\n"
     else:
-        # Direktna slika (PNG, JPG, JPEG)
         img = Image.open(uploaded_file)
         sav_tekst = pytesseract.image_to_string(img, lang='hrv+eng')
         
@@ -104,6 +103,8 @@ def parse_englmayer_tekst(tekst):
         dt_isporuke = ""
         shpt = ""
         ref = ""
+        zip_kod = ""
+        grad = ""
         
         for l in lines:
             if l.upper().startswith("DATUM NALOGA:"):
@@ -111,20 +112,28 @@ def parse_englmayer_tekst(tekst):
             elif "DATUM ISPORUKE" in l.upper():
                 dt_isporuke = l.split(":")[-1].strip()
             elif "POŠILJKA:" in l.upper() or "POSILJKA:" in l.upper():
-                m_sh = re.search(r'(ZAG-[\d\-]+|EP-[\d\-]+)', l, re.IGNORECASE)
+                m_sh = re.search(r'(EP-[\d]+|ZAG-[\d\-]+)', l, re.IGNORECASE)
                 if m_sh: shpt = m_sh.group(1)
                 m_la = re.search(r'(EP-[\d]+)', l, re.IGNORECASE)
                 if m_la: shpt = m_la.group(1)
             elif "REFERENCA:" in l.upper():
                 ref = l.split(":")[-1].strip()
+            elif "PRIMATELJ" in l.upper() or "PRIMATEL:" in l.upper() or "HR-" in l:
+                # Tražimo primatelja i točan ZIP (HR-xxxxx ili peteroznamenkasti broj uz grad)
+                m_zip_grad = re.search(r'(?:HR-)?(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s]+)', l)
+                if m_zip_grad and not zip_kod:
+                    zip_kod = m_zip_grad.group(1)
+                    grad = m_zip_grad.group(2).strip().split(',')[0]
 
-        # Ekstrakcija ZIP-a i Grada
-        zip_kod = "10410"
-        grad = "Zagreb"
-        m_zip = re.search(r'(?:HR-)?(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s,]+)', p_nalog_tekst)
-        if m_zip:
-            zip_kod = m_zip.group(1)
-            grad = m_zip.group(2).strip().split(',')[0]
+        # Fallback ako primatelj nije nađen u istoj liniji
+        if not zip_kod:
+            m_any_zip = re.search(r'HR-(\d{5})\s+([A-Za-zČĆŠĐŽčćšđž\s]+)', p_nalog_tekst)
+            if m_any_zip:
+                zip_kod = m_any_zip.group(1)
+                grad = m_any_zip.group(2).strip().split(',')[0]
+            else:
+                zip_kod = "10410"
+                grad = "Velika Gorica"
 
         zona = odrediti_zonu(zip_kod)
 
@@ -141,10 +150,16 @@ def parse_englmayer_tekst(tekst):
                 if m_izn:
                     naplaceno_gorivo = float(m_izn[-1].replace('.', '').replace(',', '.'))
 
-        # Ekstrakcija redaka paleta (svaka paleta s pripadajućom kilažom zasebno)
+        # Precizna ekstrakcija redaka paleta bez dupliranja
+        vec_dodane_stavke = set()
         for idx_l, linija in enumerate(lines):
             linija_upper = linija.upper()
+            # Tražimo retke koji sadrže tipove paleta ili OTP oznaku
             if any(t in linija_upper for t in ['EWP', 'FP', 'OWP', 'CLL']) or 'OTP' in linija_upper:
+                # Izbjegavamo retke zaglavlja tablice
+                if "OZNAKA" in linija_upper or "KOLIČI" in linija_upper or "SADRŽAJ" in linija_upper:
+                    continue
+
                 tip_palete = "FP"
                 for t_tip in ['EWP', 'OWP', 'CLL', 'FP']:
                     if t_tip in linija_upper:
@@ -157,7 +172,7 @@ def parse_englmayer_tekst(tekst):
                     kolicina = int(m_kol.group(1))
 
                 masa_kg = 0.0
-                for k in range(max(0, idx_l - 1), min(len(lines), idx_l + 3)):
+                for k in range(max(0, idx_l - 1), min(len(lines), idx_l + 2)):
                     m_masa = re.search(r'(\d+[\d\.]*,\d{2,3})', lines[k])
                     if m_masa:
                         val = float(m_masa.group(1).replace('.', '').replace(',', '.'))
@@ -169,28 +184,32 @@ def parse_englmayer_tekst(tekst):
                     m_otp = re.search(r'(otp-?[\d\/]+)', linija, re.IGNORECASE)
                     oznaka = m_otp.group(1) if m_otp else "Standard"
 
-                    redci_paleta.append({
-                        'LA-ID': shpt if shpt else "EP-GUEST",
-                        'Referenca': ref if ref else "N/A",
-                        'Oznaka_Broj': oznaka,
-                        'Datum_Naloga': dt_naloga,
-                        'Datum_Isporuke': dt_isporuke,
-                        'Grad': grad,
-                        'ZIP': zip_kod,
-                        'Zona': zona,
-                        'Broj_Paleta': kolicina,
-                        'Tip_Palete': tip_palete,
-                        'Masa_Palete_KG': round(masa_kg, 2),
-                        'Naplaceno_Osnovna_EUR': naplaceno_osnovna,
-                        'Naplaceno_Gorivo_EUR': naplaceno_gorivo,
-                        'Naplaceno_Ukupno_EUR': round(naplaceno_osnovna + naplaceno_gorivo, 2)
-                    })
+                    # Ključ za provjeru duplikata unutar istog naloga
+                    unikatni_kljuc = (shpt, ref, oznaka, masa_kg, tip_palete)
+                    if unikatni_kljuc not in vec_dodane_stavke:
+                        vec_dodane_stavke.add(unikatni_kljuc)
+                        redci_paleta.append({
+                            'LA-ID': shpt if shpt else "EP-GUEST",
+                            'Referenca': ref if ref else "N/A",
+                            'Oznaka_Broj': oznaka,
+                            'Datum_Naloga': dt_naloga,
+                            'Datum_Isporuke': dt_isporuke,
+                            'Grad': grad,
+                            'ZIP': zip_kod,
+                            'Zona': zona,
+                            'Broj_Paleta': kolicina,
+                            'Tip_Palete': tip_palete,
+                            'Masa_Palete_KG': round(masa_kg, 2),
+                            'Naplaceno_Osnovna_EUR': naplaceno_osnovna,
+                            'Naplaceno_Gorivo_EUR': naplaceno_gorivo,
+                            'Naplaceno_Ukupno_EUR': round(naplaceno_osnovna + naplaceno_gorivo, 2)
+                        })
                     
     return pd.DataFrame(redci_paleta)
 
 # --- STREAMLIT KORISNIČKO SUČELJE ---
 st.title("📊 Revizija G. Englmayer Invoica (PDF & Slike OCR)")
-st.markdown("Automatsko čitanje PDF dokumenata i slika (screenshotova), ekstrakcija paleta sa zasebnim kilažama, provjera ugovora i izračun preplata.")
+st.markdown("Automatsko čitanje PDF dokumenata i slika, ekstrakcija paleta sa zasebnim kilažama, provjera ugovora i izračun preplata.")
 
 uploaded_file = st.file_uploader("Učitajte PDF račun ili sliku specifikacije", type=["pdf", "png", "jpg", "jpeg"])
 
@@ -222,7 +241,7 @@ if uploaded_file is not None:
         tab1, tab2, tab3 = st.tabs(["📋 Detaljni Pregled po Paletama", "💰 Financijska Usporedba i Preplate", "📈 Sažetak po Zonama"])
         
         with tab1:
-            st.subheader("Ekstrahirane stavke i palete sa zasebnim kilažama")
+            st.subheader(f"Ekstrahirane stavke (Ukupno redaka: {len(df_rezultat)})")
             st.dataframe(df_rezultat, use_container_width=True)
             
             output = io.BytesIO()
