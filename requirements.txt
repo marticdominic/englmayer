@@ -1,5 +1,5 @@
-streamlit
+pdfplumber>=0.10.0
 pandas
-openpyxl
-matplotlib
+streamlit
 pypdf
+matplotlib
