@@ -94,7 +94,7 @@ def ekstrahiraj_tekst_iz_datoteke(uploaded_file):
 
 def parse_englmayer_tekst(tekst):
     redci_paleta = []
-    blocks = re.split(r'Datum naloga:', tekst, flags=IGNORECASE := re.IGNORECASE)
+    blocks = re.split(r'Datum naloga:', tekst, flags=re.IGNORECASE)
     
     for block in blocks[1:]:
         p_nalog_tekst = "Datum naloga:" + block
@@ -141,7 +141,7 @@ def parse_englmayer_tekst(tekst):
                 if m_izn:
                     naplaceno_gorivo = float(m_izn[-1].replace('.', '').replace(',', '.'))
 
-        # Ekstrakcija redaka paleta
+        # Ekstrakcija redaka paleta (svaka paleta s pripadajućom kilažom zasebno)
         for idx_l, linija in enumerate(lines):
             linija_upper = linija.upper()
             if any(t in linija_upper for t in ['EWP', 'FP', 'OWP', 'CLL']) or 'OTP' in linija_upper:
