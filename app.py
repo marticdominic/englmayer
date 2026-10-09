@@ -13,24 +13,29 @@ st.set_page_config(
 )
 
 st.title("📄 Sustav za Reviziju Logističkih Računa (PDF + Službeni Ugovorni Cjenik OF 002/2026)")
-st.markdown("Direktna analiza s čitanjem odredišta iz pariteta i automatskim dohvaćanjem poštanskih brojeva primatelja.")
+st.markdown("Direktna analiza s robusnim parsiranjem tablica i pariteta iz novog formata PDF-a.")
 
 # Sveobuhvatni službeni rječnik hrvatskih gradova i poštanskih brojeva
 HR_GRADOVI_ZIP = {
     'zagreb': 10000, 'split': 21000, 'rijeka': 51000, 'osijek': 31000,
     'zadar': 23000, 'pula': 52100, 'slavonski brod': 35000, 'karlovac': 47000,
-    'varaždin': 42000, 'šibenik': 22000, 'sisak': 44000, 'vinkovci': 32100,
+    'varaždin': 42000, 'šibenik': 22000, 'sibenik': 22000, 'sisak': 44000, 'vinkovci': 32100,
     'velika gorica': 10410, 'dubrovnik': 20000, 'bjelovar': 43000,
     'koprivnica': 48000, 'vukovar': 32000, 'požega': 34000, 'đakovo': 31400,
-    'samobor': 10430, 'čakovec': 40000, 'kutina': 44320, 'rovinj': 52210,
+    'samobor': 10430, 'čakovec': 40000, 'cakovec': 40000, 'kutina': 44320, 'rovinj': 52210,
     'makarska': 21300, 'metković': 20350, 'imotski': 21260, 'ploče': 20340,
     'korčula': 20260, 'zaprešić': 10290, 'sveta nedelja': 10431, 'belišće': 31551,
-    'valpovo': 31550, 'našice': 31500, 'crikvenica': 51260, 'poreč': 52440,
+    'belisce': 31551, 'valpovo': 31550, 'našice': 31500, 'nasice': 31500, 'crikvenica': 51260, 'poreč': 52440,
     'umag': 52470, 'labin': 52220, 'pazin': 52000, 'senj': 53270, 'gospić': 53000,
     'gospic': 53000, 'ogulin': 47300, 'dugo selo': 10370, 'vrbovec': 10340,
     'jastrebarsko': 10450, 'mlini': 20207, 'fažana': 52212, 'fazana': 52212,
     'viškovci': 31401, 'viskovci': 31401, 'viškovo': 51216, 'knin': 22300,
-    'zemunik': 23222, 'dugopolje': 21204
+    'zemunik': 23222, 'dugopolje': 21204, 'kukuljanovo': 51227, 'novi mihaljevci': 34000,
+    'virovitica': 33000, 'lovran': 51415, 'supetarska draga': 51280, 'gornja vrba': 35207,
+    'brinje': 53260, 'solin': 21210, 'banjole': 52100, 'macinec': 40306, 'čepin': 31431,
+    'cepin': 31431, 'oklaj': 22303, 'novalja': 53291, 'kneževi vinogradi': 31309, 
+    'knezevi vinogradi': 31309, 'satnica đakovačka': 31421, 'satnica djakovacka': 31421,
+    'kastel stafilic': 21217, 'kaštel stafilić': 21217
 }
 
 # Sidebar - Parametri obračuna
@@ -101,7 +106,7 @@ if uploaded_pdf is not None:
                 except:
                     pass
 
-        # 2. PARSIRANJE POŠILJAKA S PARITETOM I SIGURNIM DOHVAĆANJEM ZIP-a
+        # 2. ROBUSTNO PARSIRANJE POŠILJAKA IZ NOVOG FORMATA
         redci_paleta = []
         blokovi_naloga = re.split(r'(Datum naloga:\s*\d{2}\.\d{2}\.\d{4}\.)', pdf_tekst)
         
@@ -111,12 +116,16 @@ if uploaded_pdf is not None:
             
             p_nalog_tekst = b_meta + b_sadrzaj
             
-            m_meta_info = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4}\.)\s*Pošiljka:\s*([^\s]+)\s*LA-ID:\s*(EP-\d+)', p_nalog_tekst)
-            if not m_meta_info:
+            # Fleksibilnije traženje meta podataka u bloku
+            m_datum = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4}\.)', p_nalog_tekst)
+            m_shpt = re.search(r'Pošiljka:\s*([^\s]+)', p_nalog_tekst)
+            m_epid = re.search(r'LA-ID:\s*(EP-\d+)', p_nalog_tekst)
+            
+            if not m_epid:
                 continue
                 
-            trenutni_datum_naloga = m_meta_info.group(1)
-            trenutni_shpt = m_meta_info.group(3)
+            trenutni_datum_naloga = m_datum.group(1) if m_datum else "01.01.2026."
+            trenutni_shpt = m_epid.group(1)
             
             m_ref = re.search(r'Referenca:\s*([^\s]+)', p_nalog_tekst)
             trenutni_ref = m_ref.group(1) if m_ref else "N/A"
@@ -130,15 +139,9 @@ if uploaded_pdf is not None:
             
             paritet_linija = ""
             for line in p_nalog_tekst.split('\n'):
-                if "Paritet" in line and "istovareno" in line.lower():
+                if "paritet" in line.lower() or "istovareno" in line.lower():
                     paritet_linija = line.lower()
                     break
-            
-            if not paritet_linija:
-                for line in p_nalog_tekst.split('\n'):
-                    if "istovareno" in line.lower():
-                        paritet_linija = line.lower()
-                        break
 
             p_tekst_ciyi = paritet_linija if paritet_linija else p_nalog_tekst.lower()
             
@@ -150,8 +153,8 @@ if uploaded_pdf is not None:
                     pronadeno = True
                     break
             
-            if not pronadeno and paritet_linija:
-                dio_nakon = re.split(r'istovareno', paritet_linija, flags=re.IGNORECASE)
+            if not pronadeno and "istovareno" in p_tekst_ciyi:
+                dio_nakon = re.split(r'istovareno', p_tekst_ciyi, flags=re.IGNORECASE)
                 if len(dio_nakon) > 1:
                     c_kandidat = dio_nakon[1].strip().split()
                     if c_kandidat:
@@ -169,31 +172,40 @@ if uploaded_pdf is not None:
                         trenutni_zip = int(z_val)
                         break
 
+            # PARSIRANJE PALETA (podržava linije s | i razmacima)
             for line in p_nalog_tekst.split('\n'):
-                m_paleta = re.search(r'^(.*?)\s+([\d\.,]+)(\d)\s+(EWP|FP|OWP)', line.strip())
-                if m_paleta:
-                    raw_oznaka = m_paleta.group(1).replace('Handelsware', '').strip()
-                    oznaka_broj = raw_oznaka if raw_oznaka else "Standardna pošiljka"
-                    
-                    masa_str = m_paleta.group(2).replace('.', '').replace(',', '.')
-                    kolicina = int(m_paleta.group(3))
-                    tip_palete = m_paleta.group(4)
-                    try:
-                        masa_kg = float(masa_str)
-                        for _ in range(kolicina):
-                            redci_paleta.append({
-                                'Oznaka_Broj': oznaka_broj,
-                                'Referenca_Sustav': trenutni_ref,
-                                'LA-ID': trenutni_shpt,
-                                'Datum_Naloga': trenutni_datum_naloga,
-                                'Datum_Isporuke': trenutni_datum_isporuke,
-                                'Grad': trenutni_grad,
-                                'ZIP': trenutni_zip,
-                                'Masa_Palete_KG': round(masa_kg, 2),
-                                'Tip_Palete': tip_palete
-                            })
-                    except:
-                        pass
+                line_clean = line.strip()
+                # Tražimo linije koje sadrže tipove paleta EWP, FP ili CLL/Handelsware
+                if any(tip in line_clean.upper() for tip in ['EWP', 'FP', 'CLL']):
+                    parts = [p.strip() for p in line_clean.split('|')]
+                    if len(parts) >= 4:
+                        oznaka_broj = parts[0] if parts[0] else "Standardna pošiljka"
+                        try:
+                            kolicina = int(parts[1])
+                        except:
+                            kolicina = 1
+                        tip_palete = parts[2].upper() if len(parts) > 2 else "FP"
+                        
+                        # Tražimo masu u dijelu teksta
+                        masa_match = re.search(r'([\d\.]+,\d{2})', line_clean)
+                        if masa_match:
+                            try:
+                                masa_str = masa_match.group(1).replace('.', '').replace(',', '.')
+                                masa_kg = float(masa_str)
+                                for _ in range(kolicina):
+                                    redci_paleta.append({
+                                        'Oznaka_Broj': oznaka_broj,
+                                        'Referenca_Sustav': trenutni_ref,
+                                        'LA-ID': trenutni_shpt,
+                                        'Datum_Naloga': trenutni_datum_naloga,
+                                        'Datum_Isporuke': trenutni_datum_isporuke,
+                                        'Grad': trenutni_grad,
+                                        'ZIP': trenutni_zip,
+                                        'Masa_Palete_KG': round(masa_kg, 2),
+                                        'Tip_Palete': tip_palete if tip_palete in ['EWP', 'FP', 'OWP'] else 'FP'
+                                    })
+                            except:
+                                pass
 
         df_palete = pd.DataFrame(redci_paleta)
         st.success(f"PDF uspješno učitan! Pronađeno pojedinačnih paleta: {len(df_palete)}")
@@ -323,7 +335,7 @@ if uploaded_pdf is not None:
                     Datum_Isporuke=('Datum_Isporuke', 'max'),
                     Broj_Paleta=('Masa_Palete_KG', 'count'),
                     Ukupna_Masa_KG=('Masa_Palete_KG', 'sum'),
-                    Ugovoreno_Osnovna_EUR=('Ugovorena_Osnovna_Ukupno', 'sum'),
+                    Ugovoreno_Osnovna_EUR=('Ugovoreno_Osnovna_Ukupno', 'sum'),
                     Ugovoreno_Gorivo_EUR=('Ugovoreni_Iznos_Goriva', 'sum'),
                     Ugovoreno_Ukupno_EUR=('Ugovoreno_Paleta_Sa_Gorivom', 'sum')
                 ).reset_index()
