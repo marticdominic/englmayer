@@ -6,8 +6,8 @@ import io
 
 st.set_page_config(page_title="Englmayer Text PDF Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Uredan Excel s raspodjelom cijene)")
-st.write("Učitajte tekstualni PDF. Cijena (Suma EUR) upisuje se samo na prvu paletu svake pošiljke.")
+st.title("📦 Englmayer Parser (Precizno parsiranje po pošiljkama)")
+st.write("Učitajte tekstualni PDF. Aplikacija sada skenira svaku pošiljku zasebno i osigurava izvlačenje svih stavki.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
@@ -25,11 +25,17 @@ if uploaded_file is not None:
         with st.expander("🔍 Provjera izvučenog tekstualnog sadržaja"):
             st.text_area("Sirovi tekst iz PDF-a:", full_text, height=300)
 
-        blocks = full_text.split("Datum naloga:")
+        # Dijelimo tekst prema početku svake pošiljke (ZAG broj)
+        # Koristimo regex da razdvojimo tekst na svako pojavljivanje "Pošiljka: ZAG-"
+        blocks = re.split(r'(Pošiljka:\s*ZAG-\d+-\d+)', full_text)
+        
         all_rows = []
         
-        for block in blocks[1:]:
-            lines = [line.strip() for line in block.split("\n") if line.strip()]
+        # Spajamo zaglavlje pošiljke s pripadajućim tekstom
+        for i in range(1, len(blocks), 2):
+            header = blocks[i]
+            block_content = blocks[i+1] if i+1 < len(blocks) else ""
+            lines = [line.strip() for line in (header + "\n" + block_content).split("\n") if line.strip()]
             if not lines:
                 continue
                 
@@ -48,9 +54,13 @@ if uploaded_file is not None:
             blok_tekst = " ".join(lines)
             
             # 1. Datum naloga
-            match_datum = re.search(r'(\d{2}\.\d{2}\.\d{4})', lines[0])
+            match_datum = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4})', blok_tekst)
             if match_datum:
                 osnovni_podaci["Datum naloga"] = match_datum.group(1)
+            else:
+                match_d2 = re.search(r'(\d{2}\.\d{2}\.\d{4})', blok_tekst)
+                if match_d2:
+                    osnovni_podaci["Datum naloga"] = match_d2.group(1)
 
             # 2. Pošiljka (ZAG broj)
             match_posiljka = re.search(r'(ZAG-\d+-\d+)', blok_tekst)
@@ -79,18 +89,11 @@ if uploaded_file is not None:
             posiljatelj_tekst = ""
             primatelj_tekst = ""
             
-            for i, line in enumerate(lines):
+            for line in lines:
                 if "Pošiljatelj/dobavljač" in line or "Pošiljatelj" in line:
-                    pos_rec = line.replace("Pošiljatelj/dobavljač", "").replace("Pošiljatelj", "").strip()
-                    if not pos_rec and i + 1 < len(lines):
-                        pos_rec = lines[i+1]
-                    posiljatelj_tekst = pos_rec
-                
+                    posiljatelj_tekst = line.replace("Pošiljatelj/dobavljač", "").replace("Pošiljatelj", "").strip()
                 if "Primatelj" in line:
-                    rec = line.replace("Primatelj", "").strip()
-                    if not rec and i + 1 < len(lines):
-                        rec = lines[i+1]
-                    primatelj_tekst = rec
+                    primatelj_tekst = line.replace("Primatelj", "").strip()
 
             if posiljatelj_tekst and "makromikro" not in posiljatelj_tekst.lower():
                 osnovni_podaci["Pošiljatelj"] = posiljatelj_tekst
@@ -109,13 +112,13 @@ if uploaded_file is not None:
                     if match_5:
                         osnovni_podaci["Poštanski broj"] = match_5.group(0)
 
-            # 6. Suma EUR (Ukupan iznos s dna računa)
+            # 6. Suma EUR
             suma_eur = ""
             match_suma = re.search(r'Suma EUR\D*(\d{1,3}(?:\.\d{3})*,\d{2})', blok_tekst)
             if match_suma:
                 suma_eur = match_suma.group(1)
 
-            # 7. Čitanje tablice paleta za ovaj blok
+            # 7. Čitanje tablice paleta za ovu pošiljku
             palete_u_ovom_bloku = []
             in_palete_table = False
             
@@ -152,13 +155,12 @@ if uploaded_file is not None:
                             except:
                                 pass
 
-            # Ako smo pronašli palete u bloku, upisujemo ih u listu
+            # Raspoređivanje paleta u izlaznu tablicu
             if palete_u_ovom_bloku:
                 for idx, paleta in enumerate(palete_u_ovom_bloku):
                     redak = osnovni_podaci.copy()
                     redak.update(paleta)
                     
-                    # Suma EUR se upisuje SAMO na prvu paletu u ovom bloku (nalogu)
                     if idx == 0:
                         redak["Suma EUR"] = suma_eur
                     else:
@@ -166,7 +168,6 @@ if uploaded_file is not None:
                         
                     all_rows.append(redak)
             else:
-                # Ako nema paleta, upisujemo prazan zapis s osnovnim podacima i sumom
                 redak = osnovni_podaci.copy()
                 redak["Količina (Kom)"] = "0"
                 redak["Oznaka/Broj stavke"] = "Nije pronađeno"
@@ -181,7 +182,7 @@ if uploaded_file is not None:
             st.success(f"Uspješno izvučeno stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_uredna_suma.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_precizno_razdvojeno.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
