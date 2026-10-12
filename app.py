@@ -1,41 +1,31 @@
 import streamlit as st
 import pdfplumber
-from pdf2image import convert_from_bytes
-import pytesseract
-from PIL import Image
 import pandas as pd
 import re
 import io
 
-st.set_page_config(page_title="Hibridni Englmayer PDF/OCR Parser", layout="wide")
+st.set_page_config(page_title="Englmayer PDF Parser -> Excel", layout="wide")
 
-st.title("📦 Hibridni Parser (Tekst + OCR Slike) za Englmayer PDF")
-st.write("Učitajte PDF specifikaciju. Aplikacija će automatski pročitati i tekstualni sloj i skenirane dijelove (slike) pomoću OCR-a te izvući podatke o pošiljkama.")
+st.title("📦 Englmayer PDF Parser u Excel")
+st.write("Učitajte PDF specifikaciju. Aplikacija će automatski izvući podatke o pošiljkama i pripremiti čist Excel za preuzimanje.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
 if uploaded_file is not None:
-    with st.spinner("Čitanje PDF-a (tekst + OCR analiza slika)...jesite li strpljivi..."):
+    with st.spinner("Obrada PDF dokumenta u tijeku... Molimo pričekajte..."):
         
         pdf_bytes = uploaded_file.read()
         full_text = ""
         
-        # 1. Pokušaj čitanja preko pdfplumber-a (tekstualni sloj)
+        # Čitanje tekstualnog sloja PDF-a preko pdfplumber-a
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-            for i, page in enumerate(pdf.pages):
+            for page in pdf.pages:
                 text = page.extract_text()
-                if text and len(text.strip()) > 50:
+                if text:
                     full_text += text + "\n--STRANICA--\n"
-                else:
-                    # Ako je stranica prazna ili slika, koristi OCR preko pdf2image i pytesseract
-                    images = convert_from_bytes(pdf_bytes, first_page=i+1, last_page=i+1)
-                    for img in images:
-                        ocr_text = pytesseract.image_to_string(img, lang='hrv') # hrvatski jezik za prepoznavanje znakova
-                        full_text += ocr_text + "\n--STRANICA (OCR)--\n"
 
-        # Dijeljenje teksta po blokovima naloga
+        # Parsiranje blokova pošiljaka
         blocks = full_text.split("Datum naloga:")
-        
         shipments = []
         
         for block in blocks[1:]:
@@ -53,15 +43,13 @@ if uploaded_file is not None:
                 "Ukupna Masa (KG)": 0.0,
                 "Ukupni CBM": 0.0,
                 "Datum isporuke": "",
-                "Iznos Prijevoza (EUR)": 0.0,
-                "Iznos Goriva/Dodataka (EUR)": 0.0,
                 "Suma EUR": 0.0
             }
             
             # Datum naloga
             shipment_data["Datum naloga"] = lines[0].replace(".", "").strip()
             
-            # Pošiljka i LA-ID
+            # Pošiljka, LA-ID, Referenca, Paritet, Datum isporuke
             for i, line in enumerate(lines):
                 if "Pošiljka:" in line:
                     parts = line.split("LA-ID:")
@@ -85,7 +73,7 @@ if uploaded_file is not None:
                         rec = lines[i+1]
                     shipment_data["Primatelj"] = rec
 
-            # Ekstrakcija masa i CBM-a
+            # Mase i CBM iz tablice paketa
             for line in lines:
                 if line.startswith("Suma") and not "Suma EUR" in line:
                     nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
@@ -96,7 +84,7 @@ if uploaded_file is not None:
                         except:
                             pass
 
-            # Financije
+            # Financijski iznos (Suma EUR)
             for line in lines:
                 if "Suma EUR" in line:
                     match = re.search(r'(\d{1,3}(?:\.\d{3})*,\d{2})', line)
@@ -107,24 +95,23 @@ if uploaded_file is not None:
 
         df = pd.DataFrame(shipments)
 
-        st.success(f"Obrada završena! Pronađeno pošiljaka: {len(df)}")
-        st.dataframe(df)
+        if not df.empty:
+            st.success(f"Uspješno izvučeno pošiljaka: {len(df)}")
+            st.dataframe(df)
 
-        # Excel preuzimanje
-        file_name_xlsx = uploaded_file.name.replace(".pdf", "_hibridno_izvuceno.xlsx")
-        
-        @st.cache_data
-        def convert_df_to_excel(df):
+            # Generiranje Excel datoteke za preuzimanje
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_izvuceno.xlsx")
+            
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Posiljke')
-            return output.getvalue()
+            excel_data = output.getvalue()
 
-        excel_data = convert_df_to_excel(df)
-
-        st.download_button(
-            label="📥 Preuzmi podatke u Excel formatu (.xlsx)",
-            data=excel_data,
-            file_name=file_name_xlsx,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+            st.download_button(
+                label="📥 Preuzmi podatke u Excel formatu (.xlsx)",
+                data=excel_data,
+                file_name=file_name_xlsx,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.warning("Nije moguće pronaći podatke o pošiljkama u ovom PDF-u. Provjerite format dokumenta.")
