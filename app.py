@@ -7,13 +7,13 @@ import io
 
 st.set_page_config(page_title="Englmayer OCR Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer OCR Parser (Razrada po paletama)")
-st.write("Učitajte PDF specifikaciju. Aplikacija će za svaku paletu unutar pošiljke generirati zaseban redak u Excelu s pripadajućom kilažom.")
+st.title("📦 Englmayer OCR Parser (Čisti Datum i Pošiljka)")
+st.write("Učitajte PDF specifikaciju. Aplikacija sada precizno odvaja datum naloga i ZAG broj pošiljke.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
 if uploaded_file is not None:
-    with st.spinner("Obrada dokumenata i razrada po paletama u tijeku..."):
+    with st.spinner("Obrada dokumenata i čišćenje podataka u tijeku..."):
         
         pdf_bytes = uploaded_file.read()
         full_text = ""
@@ -32,7 +32,7 @@ if uploaded_file is not None:
                 continue
                 
             osnovni_podaci = {
-                "Datum naloga": lines[0].replace(".", "").strip(),
+                "Datum naloga": "",
                 "Pošiljka": "",
                 "LA-ID": "",
                 "Grad (Iz Pariteta)": "",
@@ -42,25 +42,42 @@ if uploaded_file is not None:
                 "Suma EUR": ""
             }
             
-            paritet_tekst = ""
-            primatelj_tekst = ""
+            # Spajamo sve linije bloka u jedan tekst kako bismo lako pronašli uzorke bez obzira na lomljenje redaka
+             blok_tekst = " ".join(lines)
+            
+            # 1. Precizno izvlačenje datuma naloga (traži format npr. 02.09.2026. ili slično na početku)
+            match_datum = re.search(r'(\d{2}\.\d{2}\.\d{4}\.?)', lines[0])
+            if match_datum:
+                osnovni_podaci["Datum naloga"] = match_datum.group(1)
+            else:
+                # Alternativno traži bilo gdje u prvoj liniji
+                match_d2 = re.search(r'(\d{2}\.\d{2}\.\d{4})', blok_tekst)
+                if match_d2:
+                    osnovni_podaci["Datum naloga"] = match_d2.group(1)
 
-            for i, line in enumerate(lines):
-                if "Pošiljka:" in line:
-                    parts = line.split("LA-ID:")
-                    osnovni_podaci["Pošiljka"] = parts[0].replace("Pošiljka:", "").strip()
-                    if len(parts) > 1:
-                        osnovni_podaci["LA-ID"] = parts[1].strip()
-                elif line.startswith("LA-ID:") and not osnovni_podaci["LA-ID"]:
-                    osnovni_podaci["LA-ID"] = line.replace("LA-ID:", "").strip()
-                elif "Paritet:" in line:
+            # 2. Precizno izvlačenje broja pošiljke (isključivo ZAG broj)
+            match_posiljka = re.search(r'(ZAG-\d+-\d+)', blok_tekst)
+            if match_posiljka:
+                osnovni_podaci["Pošiljka"] = match_posiljka.group(1)
+
+            # 3. LA-ID
+            match_laid = re.search(r'LA-ID:\s*(EP-\d+)', blok_tekst)
+            if match_laid:
+                osnovni_podaci["LA-ID"] = match_laid.group(1)
+
+            paritet_tekst = ""
+            for line in lines:
+                if "Paritet:" in line:
                     paritet_tekst = line
                 elif "Datum isporuke:" in line:
-                    osnovni_podaci["Datum isporuke"] = line.replace("Datum isporuke:", "").strip()
+                    match_isp = re.search(r'(\d{2}\.\d{2}\.\d{4})', line)
+                    if match_isp:
+                        osnovni_podaci["Datum isporuke"] = match_isp.group(1)
 
             if "istovareno" in paritet_tekst.lower():
                 osnovni_podaci["Grad (Iz Pariteta)"] = paritet_tekst.split("istovareno")[-1].strip()
 
+            primatelj_tekst = ""
             for i, line in enumerate(lines):
                 if "Primatelj" in line:
                     rec = line.replace("Primatelj", "").strip()
@@ -80,36 +97,31 @@ if uploaded_file is not None:
 
             # Financijski iznos
             suma_eur = ""
-            for line in lines:
-                if "Suma EUR" in line:
-                    match = re.search(r'(\d{1,3}(?:\.\d{3})*,\d{2})', line)
-                    if match:
-                        suma_eur = match.group(1)
-
+            match_suma = re.search(r'Suma EUR\D*(\d{1,3}(?:\.\d{3})*,\d{2})', blok_tekst)
+            if match_suma:
+                suma_eur = match_suma.group(1)
             osnovni_podaci["Suma EUR"] = suma_eur
 
-            # Pronalaženje svih pojedinačnih stavki (paleta) u pošiljci
+            # Razrada po pojedinačnim paletama/stavkama
             palete_pronadjene = False
             for line in lines:
-                if any(pkg in line for pkg in ["EWP", "FP", "CLL"]) and not line.startswith("Suma"):
+                if any(pkg in line for pkg in ["EWP", "FP", "CLL"]) and not "Suma" in line:
                     nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
                     if nums:
                         try:
-                            masa_val = nums[0] # obično je masa prva
+                            masa_val = nums[0]
                             cbm_val = nums[-1] if len(nums) > 1 else "0,00"
                             
-                            # Kreiramo kopiju osnovnih podataka za svaku paletu posebno
                             redak_palete = osnovni_podaci.copy()
                             redak_palete["Masa palete (KG)"] = masa_val
                             redak_palete["CBM palete"] = cbm_val
                             redak_palete["Detalj paketa"] = line
                             
                             all_rows.append(redak_palete)
-                            palete_pronadjene = festgestellt = True
+                            palete_pronadjene = True
                         except:
                             pass
             
-            # Ako iz nekog razloga ne nađe pojedinačne palete, doda osnovni zapis da se ne izgubi pošiljka
             if not palete_pronadjene:
                 redak_palete = osnovni_podaci.copy()
                 redak_palete["Masa palete (KG)"] = "0,00"
@@ -120,18 +132,18 @@ if uploaded_file is not None:
         df = pd.DataFrame(all_rows)
 
         if not df.empty:
-            st.success(f"Uspješno obrađeno stavki/paleta: {len(df)}")
+            st.success(f"Uspješno očišćeno i obrađeno stavki: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_palete_izvuceno.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_cisto_izvuceno.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Pošiljke_Po_Paletama')
+                df.to_excel(writer, index=False, sheet_name='Posiljke')
             excel_data = output.getvalue()
 
             st.download_button(
-                label="📥 Preuzmi podatke po paletama u Excel (.xlsx)",
+                label="📥 Preuzmi čisti Excel (.xlsx)",
                 data=excel_data,
                 file_name=file_name_xlsx,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
