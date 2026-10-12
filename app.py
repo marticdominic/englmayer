@@ -8,7 +8,7 @@ import io
 st.set_page_config(page_title="Englmayer OCR Parser -> Excel", layout="wide")
 
 st.title("📦 Englmayer OCR Parser (Čisti Datum i Pošiljka)")
-st.write("Učitajte PDF specifikaciju. Aplikacija sada precizno odvaja datum naloga i ZAG broj pošiljke.")
+st.write("Učitajte PDF specifikaciju. Aplikacija precizno odvaja datum naloga i ZAG broj pošiljke.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
@@ -42,15 +42,13 @@ if uploaded_file is not None:
                 "Suma EUR": ""
             }
             
-            # Spajamo sve linije bloka u jedan tekst kako bismo lako pronašli uzorke bez obzira na lomljenje redaka
-             blok_tekst = " ".join(lines)
+            blok_tekst = " ".join(lines)
             
-            # 1. Precizno izvlačenje datuma naloga (traži format npr. 02.09.2026. ili slično na početku)
+            # 1. Precizno izvlačenje datuma naloga
             match_datum = re.search(r'(\d{2}\.\d{2}\.\d{4}\.?)', lines[0])
             if match_datum:
                 osnovni_podaci["Datum naloga"] = match_datum.group(1)
             else:
-                # Alternativno traži bilo gdje u prvoj liniji
                 match_d2 = re.search(r'(\d{2}\.\d{2}\.\d{4})', blok_tekst)
                 if match_d2:
                     osnovni_podaci["Datum naloga"] = match_d2.group(1)
