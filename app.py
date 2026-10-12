@@ -1,176 +1,104 @@
 import streamlit as st
-from pypdf import PdfReader
 import pandas as pd
 import re
 import io
 
-st.set_page_config(page_title="Englmayer Parser -> Excel", layout="wide")
+st.set_page_config(page_title="Englmayer Excel Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Točno 69 stavki)")
-st.write("Učitajte tekstualni PDF. Stroga kontrola ambalaže i izlaznih redaka.")
+st.title("📦 Englmayer Excel Parser")
+st.write("Učitajte izvorni Excel dokument. Aplikacija precizno izvlači sve stavke i generira čist izlazni Excel.")
 
-uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
+uploaded_file = st.file_uploader("Odaberite Excel datoteku (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
-    with st.spinner("Obrada dokumenta u tijeku..."):
+    with st.spinner("Obrada Excel datoteke u tijeku..."):
         
-        reader = PdfReader(uploaded_file)
-        full_text = ""
+        df_raw = pd.read_excel(uploaded_file, sheet_name=0)
         
-        for i, page in enumerate(reader.pages):
-            text = page.extract_text()
-            if text:
-                full_text += text + f"\n--STRANICA {i+1}--\n"
-
-        blocks = re.split(r'(Pošiljka:\s*ZAG-\d+-\d+)', full_text)
         all_rows = []
+        current_zag = ""
+        current_datum_naloga = ""
+        current_la_id = ""
+        current_datum_isporuke = ""
+        current_suma_eur = ""
+        current_primatelj = ""
+        current_grad = ""
         
-        for i in range(1, len(blocks), 2):
-            header = blocks[i]
-            content = blocks[i+1] if i+1 < len(blocks) else ""
+        # Prolazimo red po red kroz Excel
+        for idx, row in df_raw.iterrows():
+            row_vals = [val for val in row.values if pd.notna(val)]
+            row_str = " ".join([str(val) for val in row_vals])
             
-            if "Broj Računa:" in content:
-                content = content.split("Broj Računa:")[0]
+            # 1. Hvatanje zaglavlja pošiljke
+            if 'ZAG-' in row_str:
+                m_zag = re.search(r'(ZAG-\d+-\d+)', row_str)
+                if m_zag:
+                    current_zag = m_zag.group(1)
+                    
+            if 'Datum naloga:' in row_str:
+                m_dt = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4})', row_str)
+                if m_dt:
+                    current_datum_naloga = m_dt.group(1)
+                    
+            if 'LA-ID:' in row_str:
+                m_la = re.search(r'LA-ID:\s*(EP-\d+)', row_str)
+                if m_la:
+                    current_la_id = m_la.group(1)
+                    
+            if 'Datum isporuke:' in row_str:
+                m_isp = re.search(r'(\d{2}\.\d{2}\.\d{4})', row_str)
+                if m_isp:
+                    current_datum_isporuke = m_isp.group(1)
 
-            lines = [line.strip() for line in (header + "\n" + content).split("\n") if line.strip()]
-            if not lines:
-                continue
-                
-            osnovni_podaci = {
-                "Datum naloga": "",
-                "Pošiljka": "",
-                "LA-ID": "",
-                "Grad (Iz Pariteta)": "",
-                "Pošiljatelj": "",
-                "Primatelj": "",
-                "Poštanski broj": "",
-                "Datum isporuke": "",
-                "Suma EUR": ""
-            }
-            
-            blok_tekst = " ".join(lines)
-            
-            match_posiljka = re.search(r'(ZAG-\d+-\d+)', header)
-            if match_posiljka:
-                osnovni_podaci["Pošiljka"] = match_posiljka.group(1)
-
-            match_datum = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4})', blok_tekst)
-            if match_datum:
-                osnovni_podaci["Datum naloga"] = match_datum.group(1)
-
-            match_laid = re.search(r'LA-ID:\s*(EP-\d+)', blok_tekst)
-            if match_laid:
-                osnovni_podaci["LA-ID"] = match_laid.group(1)
-
-            paritet_tekst = ""
-            for line in lines:
-                if "Paritet:" in line:
-                    paritet_tekst = line
-                elif "Datum isporuke:" in line:
-                    match_isp = re.search(r'(\d{2}\.\d{2}\.\d{4})', line)
-                    if match_isp:
-                        osnovni_podaci["Datum isporuke"] = match_isp.group(1)
-
-            if "istovareno" in paritet_tekst.lower():
-                osnovni_podaci["Grad (Iz Pariteta)"] = paritet_tekst.split("istovareno")[-1].strip()
-
-            posiljatelj_tekst = ""
-            primatelj_tekst = ""
-            
-            for line in lines:
-                if "Pošiljatelj/dobavljač" in line or "Pošiljatelj" in line:
-                    posiljatelj_tekst = line.replace("Pošiljatelj/dobavljač", "").replace("Pošiljatelj", "").strip()
-                if "Primatelj" in line:
-                    primatelj_tekst = line.replace("Primatelj", "").strip()
-
-            if posiljatelj_tekst and "makromikro" not in posiljatelj_tekst.lower():
-                osnovni_podaci["Pošiljatelj"] = posiljatelj_tekst
-            else:
-                osnovni_podaci["Pošiljatelj"] = "Makromikro"
-
-            osnovni_podaci["Primatelj"] = primatelj_tekst
-
-            if primatelj_tekst:
-                match_pob = re.search(r'HR-\s*(\d{5})', primatelj_tekst)
-                if match_pob:
-                    osnovni_podaci["Poštanski broj"] = match_pob.group(1)
-                else:
-                    match_5 = re.search(r'\b\d{5}\b', primatelj_tekst)
-                    if match_5:
-                        osnovni_podaci["Poštanski broj"] = match_5.group(0)
-
-            suma_eur = ""
-            match_suma = re.search(r'Suma EUR\D*(\d{1,3}(?:\.\d{3})*,\d{2})', blok_tekst)
-            if match_suma:
-                suma_eur = match_suma.group(1)
-
-            palete_u_ovom_bloku = []
-            
-            for line in lines:
-                line_lower = line.lower()
-                
-                # Izričito zabranjujemo sve redove s datumima, zaglavljima, sumama i metapodacima
-                if any(k in line_lower for k in ["suma", "neto iznos", "temeljni kapital", "ukupno", "pdv", "uplaćen", "paritet:", "datum isporuke:", "datum naloga", "la-id:", "pošiljatelj", "primatelj", "opis usluge", "broj računa"]):
-                    continue
-                
-                if line_lower.startswith("110") or line_lower.startswith("197") or line_lower.startswith("199"):
-                    continue
-
-                # REDAK MORA SADRŽAVATI AMBALAŽU I MASU (s decimalnim zarezom)
-                has_packaging = any(term in line_lower for term in ["ewp", "fp", "cll", "otp", "handelsware"])
-                nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
-                
-                if has_packaging and len(nums) >= 1:
+            # 2. Provjera je li ovo redak s paletom/stavkom (sadrži EWP, FP, CLL, OTP ili Handelsware, a nije Suma)
+            if any(term in row_str.lower() for term in ['ewp', 'fp', 'cll', 'otp', 'handelsware']) and 'suma' not in row_str.lower()[:10]:
+                if 'oznaka/broj' not in row_str.lower() and 'pak.' not in row_str.lower():
                     try:
-                        parts = line.split()
+                        # Izvlačenje količine, mase i CBM-a iz ćelija
                         kol_val = "1"
-                        for p in parts:
-                            if p.isdigit() and len(p) <= 2:
-                                kol_val = p
-                                break
-
-                        masa_val = nums[0]
-                        cbm_val = nums[-1] if len(nums) > 1 else "0,00"
+                        masa_val = "0,00"
+                        cbm_val = "0,00"
                         
-                        palete_u_ovom_bloku.append({
-                            "Količina (Kom)": kol_val,
-                            "Oznaka/Broj stavke": line,
-                            "Masa palete (KG)": masa_val,
-                            "CBM palete": cbm_val
+                        # Tražimo brojčane vrijednosti u retku
+                        nums = []
+                        for val in row.values:
+                            if pd.notna(val):
+                                v_str = str(val).strip()
+                                if v_str.replace('.', '', 1).isdigit() or ',' in v_str:
+                                    nums.append(v_str)
+
+                        all_rows.append({
+                            "Datum naloga": current_datum_naloga,
+                            "Pošiljka": current_zag,
+                            "LA-ID": current_la_id,
+                            "Pošiljatelj": "Makromikro",
+                            "Primatelj": current_primatelj,
+                            "Datum isporuke": current_datum_isporuke,
+                            "Oznaka/Broj stavke": row_str,
+                            "Masa palete (KG)": nums[-2] if len(nums) >= 2 else "0,00",
+                            "CBM palete": nums[-1] if len(nums) >= 1 else "0,00"
                         })
                     except:
                         pass
 
-            if palete_u_ovom_bloku:
-                for idx, paleta in enumerate(palete_u_ovom_bloku):
-                    redak = osnovni_podaci.copy()
-                    redak.update(paleta)
-                    
-                    if idx == 0:
-                        redak["Suma EUR"] = suma_eur
-                    else:
-                        redak["Suma EUR"] = ""
-                        
-                    all_rows.append(redak)
+        df_out = pd.DataFrame(all_rows)
 
-        df = pd.DataFrame(all_rows)
+        if not df_out.empty:
+            st.success(f"Uspješno izvučeno stavki/paleta: {len(df_out)}")
+            st.dataframe(df_out)
 
-        if not df.empty:
-            st.success(f"Uspješno izvučeno točnih stavki/paleta: {len(df)}")
-            st.dataframe(df)
-
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_englmayer_tocno_69.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".xlsx", "_parsirano.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Posiljke')
+                df_out.to_excel(writer, index=False, sheet_name='Posiljke')
             excel_data = output.getvalue()
 
             st.download_button(
-                label="📥 Preuzmi Excel (.xlsx)",
+                label="📥 Preuzmi čisti Excel (.xlsx)",
                 data=excel_data,
                 file_name=file_name_xlsx,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.warning("Nije moguće pronaći podatke u dokumentu.")
+            st.warning("Nije moguće pronaći stavke u Excel datoteci.")
