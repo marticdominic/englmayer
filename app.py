@@ -6,8 +6,8 @@ import io
 
 st.set_page_config(page_title="Englmayer Text PDF Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Direktno hvatanje svih paleta)")
-st.write("Učitajte tekstualni PDF. Aplikacija automatski pronalazi sve palete prema tipu pakiranja i masi.")
+st.title("📦 Englmayer Parser (Bez dupliranja stavki)")
+st.write("Učitajte tekstualni PDF. Aplikacija precizno izvlači palete i uklanja duplikate.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
@@ -22,15 +22,12 @@ if uploaded_file is not None:
             if text:
                 full_text += text + f"\n--STRANICA {i+1}--\n"
 
-        # Dijelimo tekst prema početku svake pošiljke (ZAG broj)
-        blocks = re.split(r'(Pošiljka:\s*ZAG-\d+-\d+)', full_text)
-        
+        # Čisto dijeljenje dokumenta na pojedinačne naloge prema "Datum naloga:"
+        blocks = full_text.split("Datum naloga:")
         all_rows = []
         
-        for i in range(1, len(blocks), 2):
-            header = blocks[i]
-            block_content = blocks[i+1] if i+1 < len(blocks) else ""
-            lines = [line.strip() for line in (header + "\n" + block_content).split("\n") if line.strip()]
+        for block in blocks[1:]:
+            lines = [line.strip() for line in block.split("\n") if line.strip()]
             if not lines:
                 continue
                 
@@ -49,13 +46,9 @@ if uploaded_file is not None:
             blok_tekst = " ".join(lines)
             
             # 1. Datum naloga
-            match_datum = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4})', blok_tekst)
+            match_datum = re.search(r'(\d{2}\.\d{2}\.\d{4})', lines[0])
             if match_datum:
                 osnovni_podaci["Datum naloga"] = match_datum.group(1)
-            else:
-                match_d2 = re.search(r'(\d{2}\.\d{2}\.\d{4})', blok_tekst)
-                if match_d2:
-                    osnovni_podaci["Datum naloga"] = match_d2.group(1)
 
             # 2. Pošiljka (ZAG broj)
             match_posiljka = re.search(r'(ZAG-\d+-\d+)', blok_tekst)
@@ -113,40 +106,44 @@ if uploaded_file is not None:
             if match_suma:
                 suma_eur = match_suma.group(1)
 
-            # 7. Čitanje paleta: tražimo retke s paletama bez obzira na zaglavlje tablice
+            # 7. Čitanje tablice paleta unutar ovog bloka
             palete_u_ovom_bloku = []
+            in_palete_table = False
             
             for line in lines:
-                # Preskačemo redove s troškovima usluga (110, 197) i općenite sume na dnu
-                if line.startswith("110") or line.startswith("197") or "Suma EUR" in line or "Broj Računa:" in line:
+                if "Oznaka/Broj" in line:
+                    in_palete_table = True
+                    continue
+                if "Suma" in line or "Opis usluge" in line or "Broj Računa:" in line or "Strana" in line:
+                    if "Suma" in line:
+                        in_palete_table = False
                     continue
                 
-                # Uvjet za prepoznavanje retka palete: sadrži tip ambalaže ili oznaku, te brojčanu masu
-                if any(term in line.lower() for term in ["ewp", "fp", "cll", "otp", "handelsware", "groupage"]):
-                    nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
-                    if len(nums) >= 1:
-                        try:
-                            # Izvlačenje količine komada (tražimo jednoznamenkasti broj s početka retka)
-                            parts = line.split()
-                            kol_val = "1"
-                            for p in parts:
-                                if p.isdigit() and len(p) <= 2:
-                                    kol_val = p
-                                    break
+                if in_palete_table:
+                    if any(term in line for term in ["EWP", "FP", "CLL", "otp", "OTP", "Handelsware"]):
+                        nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
+                        if len(nums) >= 1:
+                            try:
+                                parts = line.split()
+                                kol_val = "1"
+                                for p in parts:
+                                    if p.isdigit() and len(p) <= 2:
+                                        kol_val = p
+                                        break
 
-                            masa_val = nums[0]
-                            cbm_val = nums[-1] if len(nums) > 1 else "0,00"
-                            
-                            palete_u_ovom_bloku.append({
-                                "Količina (Kom)": kol_val,
-                                "Oznaka/Broj stavke": line,
-                                "Masa palete (KG)": masa_val,
-                                "CBM palete": cbm_val
-                            })
-                        except:
-                            pass
+                                masa_val = nums[0]
+                                cbm_val = nums[-1] if len(nums) > 1 else "0,00"
+                                
+                                palete_u_ovom_bloku.append({
+                                    "Količina (Kom)": kol_val,
+                                    "Oznaka/Broj stavke": line,
+                                    "Masa palete (KG)": masa_val,
+                                    "CBM palete": cbm_val
+                                })
+                            except:
+                                pass
 
-            # Dodavanje u konačnu listu i raspodjela sume EUR samo na prvu paletu
+            # Raspodjela paleta i upis sume samo na prvu stavku
             if palete_u_ovom_bloku:
                 for idx, paleta in enumerate(palete_u_ovom_bloku):
                     redak = osnovni_podaci.copy()
@@ -169,11 +166,14 @@ if uploaded_file is not None:
 
         df = pd.DataFrame(all_rows)
 
+        # Konačno uklanjanje eventualnih duplih redaka prema broju pošiljke i opisu stavke
         if not df.empty:
-            st.success(f"Uspješno izvučeno stavki/paleta: {len(df)}")
+            df = df.drop_duplicates(subset=["Pošiljka", "Oznaka/Broj stavke", "Masa palete (KG)"])
+
+            st.success(f"Uspješno izvučeno jedinstvenih stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_sve_palete_direktno.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_cisto_bez_duplikata.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
