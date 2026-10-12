@@ -6,28 +6,38 @@ import io
 st.set_page_config(page_title="Englmayer Excel Parser -> Excel", layout="wide")
 
 st.title("📦 Englmayer Excel Parser (Točno 69 stavki)")
-st.write("Učitajte izvorni Excel dokument. Aplikacija precizno raspisuje palete prema količinama.")
+st.write("Učitajte izvorni Excel dokument. Precizan izvoz pošiljaka, masa, primatelja i cijena.")
 
 uploaded_file = st.file_uploader("Odaberite Excel datoteku (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
-    with st.spinner("Obrada i normalizacija stavki u tijeku..."):
+    with st.spinner("Obrada i mapiranje podataka u tijeku..."):
         
         df_raw = pd.read_excel(uploaded_file, sheet_name=0)
         
+        # 1. Prvo kupimo mapu cijena (LA-ID -> Iznos in EUR) iz gornjih tablica zbirnog računa
+        price_map = {}
+        for idx, row in df_raw.iterrows():
+            row_vals = [val for val in row.values if pd.notna(val)]
+            for i, val in enumerate(row_vals):
+                v_str = str(val).strip()
+                if v_str.startswith('EP-') and i + 3 < len(row_vals):
+                    # obično je iznos na zadnjoj poziciji u tom retku
+                    possible_price = row_vals[-1]
+                    price_map[v_str] = str(possible_price).strip()
+
         all_rows = []
         current_zag = ""
         current_datum_naloga = ""
         current_la_id = ""
         current_datum_isporuke = ""
-        current_suma_eur = ""
+        current_primatelj = ""
         
-        # Prolazimo red po red
+        # 2. Prolazimo red po red i hvatamo pojedinačne palete i podatke
         for idx, row in df_raw.iterrows():
             row_vals = [val for val in row.values if pd.notna(val)]
             row_str = " ".join([str(val) for val in row_vals])
             
-            # 1. Hvatanje zaglavlja pošiljke
             if 'ZAG-' in row_str:
                 m_zag = re.search(r'(ZAG-\d+-\d+)', row_str)
                 if m_zag:
@@ -48,51 +58,40 @@ if uploaded_file is not None:
                 if m_isp:
                     current_datum_isporuke = m_isp.group(1)
 
-            # 2. Hvatanje redaka sa Sumama (koji sadrže točan broj komada/paleta i ukupne mase za tu pošiljku)
-            if 'suma' in row_str.lower() and 'eur' not in row_str.lower() and 'neto' not in row_str.lower():
-                try:
-                    # Pronađemo količinu i masu u retku sume
-                    nums_in_row = []
-                    text_parts = []
-                    for val in row.values:
-                        if pd.notna(val):
-                            v_str = str(val).strip()
-                            # Provjerimo je li to brojčana vrijednost
-                            if re.match(r'^\d+([.,]\d+)?$', v_str.replace('.', '', 1)):
-                                nums_in_row.append(v_str)
-                            else:
-                                text_parts.append(v_str)
-                    
-                    # Izvučemo količinu (obično prvi manji cijeli broj)
-                    kolicina = 1
-                    for part in row_vals:
-                        p_str = str(part).strip()
-                        m_dig = re.search(r'\b([1-9]\d*)\b', p_str)
-                        if m_dig and int(m_dig.group(1)) < 20 and 'suma' not in p_str.lower():
-                            kolicina = int(m_dig.group(1))
-                            break
-                    
-                    # Nađemo tip palete (EWP, FP, CLL)
-                    pakiranje = "EWP"
-                    if "fp" in row_str.lower():
-                        pakiranje = "FP"
-                    elif "cll" in row_str.lower():
-                        pakiranje = "CLL"
+            if 'Primatelj' in row_str or 'Primatelj:' in row_str:
+                # Pokušavamo izvući naziv primatelja ako postoji u blizini
+                for v in row_vals:
+                    if 'HR-' in str(v) or 'd.o.o.' in str(v):
+                        current_primatelj = str(v).strip()
 
-                    # Generiramo onoliko redaka kolika je količina paleta
-                    for _ in range(kolicina):
+            # Hvatanje redaka paleta (EWP, FP, CLL, OTP, Handelsware, a nije Suma)
+            if any(term in row_str.lower() for term in ['ewp', 'fp', 'cll', 'otp', 'handelsware']) and 'suma' not in row_str.lower()[:10]:
+                if 'oznaka/broj' not in row_str.lower() and 'pak.' not in row_str.lower():
+                    try:
+                        # Pronađemo mase u retku (decimalni ili cijeli brojevi na kraju)
+                        nums = []
+                        for val in row.values:
+                            if pd.notna(val):
+                                v_str = str(val).strip()
+                                if re.match(r'^\d+([.,]\d+)?$', v_str.replace('.', '', 1)):
+                                    nums.append(v_str)
+
+                        masa = nums[-2] if len(nums) >= 2 else (nums[-1] if len(nums) == 1 else "0,00")
+                        cijena_posiljke = price_map.get(current_la_id, "0.00")
+
                         all_rows.append({
-                            "Datum naloga": current_datum_naloga,
+                            "Datum izrade": current_datum_naloga,
+                            "Datum dostave": current_datum_isporuke,
                             "Pošiljka": current_zag,
                             "LA-ID": current_la_id,
                             "Pošiljatelj": "Makromikro",
-                            "Datum isporuke": current_datum_isporuke,
-                            "Tip palete": pakiranje,
-                            "Količina (Kom)": 1,
-                            "Sifra/Opis": row_str
+                            "Primatelj": current_primatelj,
+                            "Cijena po pošiljci (€)": cijena_posiljke,
+                            "Oznaka/Opis stavke": row_str,
+                            "Masa palete (KG)": masa
                         })
-                except:
-                    pass
+                    except:
+                        pass
 
         df_out = pd.DataFrame(all_rows)
 
@@ -100,7 +99,7 @@ if uploaded_file is not None:
             st.success(f"Uspješno izvučeno točnih stavki/paleta: {len(df_out)}")
             st.dataframe(df_out)
 
-            file_name_xlsx = uploaded_file.name.replace(".xlsx", "_tocno_69_stavki.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".xlsx", "_englmayer_69_uredno.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
