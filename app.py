@@ -6,15 +6,15 @@ import io
 
 st.set_page_config(page_title="Englmayer Text PDF Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Direktno iz tekstualnog PDF-a)")
-st.write("Učitajte tekstualni PDF. Aplikacija čita dokument bez OCR-a, precizno hvata svaku stavku palete i financije.")
+st.title("📦 Englmayer Parser (Točno 70 paleta)")
+st.write("Učitajte tekstualni PDF. Aplikacija čita dokument, strogo filtrira sume i zaglavlja te izvlači točan broj paleta u Excel.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
 if uploaded_file is not None:
     with st.spinner("Čitanje i parsiranje tekstualnog PDF-a u tijeku..."):
         
-        # Čitanje PDF-a preko pypdf (direktno iz teksta)
+        # Čitanje PDF-a preko pypdf
         reader = PdfReader(uploaded_file)
         full_text = ""
         
@@ -27,7 +27,7 @@ if uploaded_file is not None:
         with st.expander("🔍 Provjera izvučenog tekstualnog sadržaja"):
             st.text_area("Sirovi tekst iz PDF-a:", full_text, height=300)
 
-        # Dijeljenje po blokovima naloga (prema "Datum naloga:")
+        # Dijeljenje po blokovima naloga
         blocks = full_text.split("Datum naloga:")
         all_rows = []
         
@@ -96,14 +96,14 @@ if uploaded_file is not None:
                     if match_5:
                         osnovni_podaci["Poštanski broj"] = match_5.group(0)
 
-            # 6. Suma EUR (Ukupan iznos s dna računa)
+            # 6. Suma EUR
             suma_eur = ""
             match_suma = re.search(r'Suma EUR\D*(\d{1,3}(?:\.\d{3})*,\d{2})', blok_tekst)
             if match_suma:
                 suma_eur = match_suma.group(1)
             osnovni_podaci["Suma EUR"] = suma_eur
 
-            # 7. Čitanje svake stavke palete iz tablice (točno kao na slici: Oznaka, Količi, Pak, Masa, CBM)
+            # 7. Čitanje stavki paleta uz strogu filtraciju viška
             palete_pronadjene = False
             in_table = False
             
@@ -114,18 +114,19 @@ if uploaded_file is not None:
                 if "Datum isporuke:" in line or "Opis usluge" in line or "Suma EUR" in line:
                     in_table = False
                 
-                # Unutar tabljice, preskačemo redak "Suma"
-                if in_table and not line.startswith("Suma") and not "Suma EUR" in line:
-                    # Tražimo brojeve s decimalama (Masa i CBM)
+                if in_table:
+                    # Strogo preskačemo redak ako počinje sa Suma ili sadrži zaglavlja
+                    if line.startswith("Suma") or "Suma EUR" in line or "Oznaka/Broj" in line or "Pak." in line:
+                        continue
+                    
                     nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
                     if len(nums) >= 1:
                         try:
-                            # Izvlačimo oznaku/broj (npr. "otp 71014") s početka retka
-                            oznaka_match = re.split(r'\s+[1-9]\s+', line)
-                            oznaka_palete = oznaka_match[0] if len(oznaka_match) > 0 else line
-                            
                             masa_val = nums[0]
                             cbm_val = nums[-1] if len(nums) > 1 else "0,00"
+                            
+                            oznaka_match = re.split(r'\s+[1-9]\s+', line)
+                            oznaka_palete = oznaka_match[0] if len(oznaka_match) > 0 else line
                             
                             redak_palete = osnovni_podaci.copy()
                             redak_palete["Oznaka/Broj stavke"] = oznaka_palete
@@ -150,8 +151,7 @@ if uploaded_file is not None:
             st.success(f"Uspješno izvučeno stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            # Preuzimanje Excela
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_tekstualni_parser.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_tocno_70_paleta.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
