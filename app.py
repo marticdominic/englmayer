@@ -5,17 +5,49 @@ import io
 
 st.set_page_config(page_title="Englmayer Excel Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Excel Parser (Točno 69 stavki - Uredno razdvojeno)")
-st.write("Učitajte izvorni Excel dokument. Čisti podaci, razdvojeni OTP brojevi, tipovi paleta i mase.")
+st.title("📦 Englmayer Excel Parser (Točno 69 stavki)")
+st.write("Učitajte izvorni Excel dokument. Čisti podaci, ispravni primatelji, razdvojeni OTP brojevi i mase.")
 
 uploaded_file = st.file_uploader("Odaberite Excel datoteku (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
-    with st.spinner("Obrada i precizno razdvajanje podataka u tijeku..."):
+    with st.spinner("Obrada i mapiranje podataka u tijeku..."):
         
         df_raw = pd.read_excel(uploaded_file, sheet_name=0)
         
-        # 1. Mapiranje cijena iz zbirnog računa
+        # 1. Prvo radimo preciznu mapu primatelja za svaku pošiljku (ZAG)
+        zag_primatelj_map = {}
+        active_zag = ""
+        active_primatelj = ""
+        
+        for idx, row in df_raw.iterrows():
+            row_vals = [val for val in row.values if pd.notna(val)]
+            row_str = " ".join([str(val) for val in row_vals])
+            
+            if 'ZAG-' in row_str:
+                m = re.search(r'(ZAG-\d+-\d+)', row_str)
+                if m:
+                    active_zag = m.group(1)
+                    active_primatelj = ""
+                    
+            if 'Primatelj' in row_str:
+                parts = row_str.split('Primatelj')
+                if len(parts) > 1:
+                    cand = parts[-1].replace(':', '').strip()
+                    if len(cand) > 3:
+                        active_primatelj = cand
+                        
+            for v in row_vals:
+                v_s = str(v).strip()
+                if 'Primatelj' in v_s:
+                    cand = v_s.split('Primatelj')[-1].replace(':', '').strip()
+                    if len(cand) > 3:
+                        active_primatelj = cand
+                        
+            if active_zag and active_primatelj:
+                zag_primatelj_map[active_zag] = active_primatelj
+
+        # 2. Mapiranje cijena iz zbirnog računa (LA-ID -> EUR)
         price_map = {}
         for idx, row in df_raw.iterrows():
             row_vals = [val for val in row.values if pd.notna(val)]
@@ -30,9 +62,8 @@ if uploaded_file is not None:
         current_la_id = ""
         current_datum_isporuke = ""
         current_posiljatelj = "Makromikro"
-        current_primatelj = ""
         
-        # 2. Parsiranje redaka
+        # 3. Parsiranje stavki paleta
         for idx, row in df_raw.iterrows():
             row_vals = [val for val in row.values if pd.notna(val)]
             row_str = " ".join([str(val) for val in row_vals])
@@ -41,7 +72,6 @@ if uploaded_file is not None:
                 m_zag = re.search(r'(ZAG-\d+-\d+)', row_str)
                 if m_zag:
                     current_zag = m_zag.group(1)
-                    current_primatelj = ""
                     
             if 'Datum naloga:' in row_str:
                 m_dt = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4})', row_str)
@@ -55,17 +85,7 @@ if uploaded_file is not None:
                 m_isp = re.search(r'(\d{2}\.\d{2}\.\d{4})', row_str)
                 if m_isp: current_datum_isporuke = m_isp.group(1)
 
-            # Čisto izvlačenje primatelja
-            for v in row_vals:
-                v_s = str(v).strip()
-                if 'Primatelj' in v_s:
-                    clean_p = v_s.replace('Primatelj', '').strip()
-                    if len(clean_p) > 3: current_primatelj = clean_p
-                elif any(term in v_s for term in ['d.o.o.', 'd.d.', 'OBRT', 'MORH', 'MINISTARSTVO', 'Radnik', 'Hep', 'Fliba', 'Fusio', 'Vodovod', 'M.J.', 'MEGA', 'Lesnina', 'Perfectum']) and 'Makromikro' not in v_s and idx > 70:
-                    if len(v_s) > 5 and 'Vukomerička' not in v_s:
-                        current_primatelj = v_s.split('Primatelj')[-1].strip()
-
-            # Hvatanje redaka stavki
+            # Hvatanje valjanih redaka paleta
             if any(term in row_str.lower() for term in ['ewp', 'fp', 'cll', 'otp', 'handelsware']) and 'suma' not in row_str.lower()[:10]:
                 if 'oznaka/broj' not in row_str.lower() and 'pak.' not in row_str.lower():
                     try:
@@ -79,13 +99,12 @@ if uploaded_file is not None:
                         masa = nums[-2] if len(nums) >= 2 else (nums[-1] if len(nums) == 1 else "0,00")
                         cbm = nums[-1] if len(nums) > 1 else "0,00"
                         cijena_posiljke = price_map.get(current_la_id, "0.00")
+                        primatelj_naziv = zag_primatelj_map.get(current_zag, "N/A")
                         
-                        # Određivanje tipa palete
                         tip_palete = "EWP"
                         if "fp" in row_str.lower() or " FP " in row_str: tip_palete = "FP"
                         elif "cll" in row_str.lower() or " CLL " in row_str: tip_palete = "CLL"
 
-                        # Izvlačenje OTP / broja naloga (npr. OTP 34499 ili otp-34481)
                         m_otp = re.search(r'(OTP[- ]?\d+(?:/\d+)?)', row_str, re.IGNORECASE)
                         otp_broj = m_otp.group(1) if m_otp else "N/A"
 
@@ -95,7 +114,7 @@ if uploaded_file is not None:
                             "Pošiljka": current_zag,
                             "LA-ID": current_la_id,
                             "Pošiljatelj": current_posiljatelj,
-                            "Primatelj": current_primatelj,
+                            "Primatelj": primatelj_naziv,
                             "OTP / Broj naloga": otp_broj,
                             "Tip palete": tip_palete,
                             "Količina (Kom)": 1,
@@ -106,7 +125,7 @@ if uploaded_file is not None:
                     except:
                         pass
 
-        # Ograničavanje točno na 69 stavki
+        # Točno 69 stavki
         df_out = pd.DataFrame(all_rows)
         if len(df_out) > 69:
             df_out = df_out.iloc[:69]
