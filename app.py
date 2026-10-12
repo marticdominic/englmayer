@@ -5,13 +5,13 @@ import io
 
 st.set_page_config(page_title="Englmayer Excel Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Excel Parser (Točno 69 stavki)")
-st.write("Učitajte izvorni Excel dokument. Precizan izvoz i razdvajanje opisa.")
+st.title("📦 Englmayer Excel Parser (Točno 69 stavki - Uredno razdvojeno)")
+st.write("Učitajte izvorni Excel dokument. Čisti podaci, razdvojeni OTP brojevi, tipovi paleta i mase.")
 
 uploaded_file = st.file_uploader("Odaberite Excel datoteku (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
-    with st.spinner("Obrada i normalizacija podataka u tijeku..."):
+    with st.spinner("Obrada i precizno razdvajanje podataka u tijeku..."):
         
         df_raw = pd.read_excel(uploaded_file, sheet_name=0)
         
@@ -55,13 +55,17 @@ if uploaded_file is not None:
                 m_isp = re.search(r'(\d{2}\.\d{2}\.\d{4})', row_str)
                 if m_isp: current_datum_isporuke = m_isp.group(1)
 
+            # Čisto izvlačenje primatelja
             for v in row_vals:
                 v_s = str(v).strip()
-                if any(term in v_s for term in ['d.o.o.', 'd.d.', 'OBRT', 'MORH', 'MINISTARSTVO', 'Radnik', 'Hep', 'Fliba', 'Fusio', 'Vodovod', 'M.J.', 'MEGA', 'Lesnina', 'Perfectum']) and 'Makromikro' not in v_s and idx > 70:
-                    if len(v_s) > 5:
-                        current_primatelj = v_s
+                if 'Primatelj' in v_s:
+                    clean_p = v_s.replace('Primatelj', '').strip()
+                    if len(clean_p) > 3: current_primatelj = clean_p
+                elif any(term in v_s for term in ['d.o.o.', 'd.d.', 'OBRT', 'MORH', 'MINISTARSTVO', 'Radnik', 'Hep', 'Fliba', 'Fusio', 'Vodovod', 'M.J.', 'MEGA', 'Lesnina', 'Perfectum']) and 'Makromikro' not in v_s and idx > 70:
+                    if len(v_s) > 5 and 'Vukomerička' not in v_s:
+                        current_primatelj = v_s.split('Primatelj')[-1].strip()
 
-            # Hvatanje valjanih redaka stavki (isključujući zaglavlja i sume)
+            # Hvatanje redaka stavki
             if any(term in row_str.lower() for term in ['ewp', 'fp', 'cll', 'otp', 'handelsware']) and 'suma' not in row_str.lower()[:10]:
                 if 'oznaka/broj' not in row_str.lower() and 'pak.' not in row_str.lower():
                     try:
@@ -76,12 +80,14 @@ if uploaded_file is not None:
                         cbm = nums[-1] if len(nums) > 1 else "0,00"
                         cijena_posiljke = price_map.get(current_la_id, "0.00")
                         
+                        # Određivanje tipa palete
                         tip_palete = "EWP"
-                        if "fp" in row_str.lower(): tip_palete = "FP"
-                        elif "cll" in row_str.lower(): tip_palete = "CLL"
+                        if "fp" in row_str.lower() or " FP " in row_str: tip_palete = "FP"
+                        elif "cll" in row_str.lower() or " CLL " in row_str: tip_palete = "CLL"
 
-                        # Čistiji i razdvojen opis stavke
-                        opis_stavke = re.sub(r'\s+', ' ', row_str).strip()
+                        # Izvlačenje OTP / broja naloga (npr. OTP 34499 ili otp-34481)
+                        m_otp = re.search(r'(OTP[- ]?\d+(?:/\d+)?)', row_str, re.IGNORECASE)
+                        otp_broj = m_otp.group(1) if m_otp else "N/A"
 
                         all_rows.append({
                             "Datum izrade": current_datum_naloga,
@@ -90,17 +96,17 @@ if uploaded_file is not None:
                             "LA-ID": current_la_id,
                             "Pošiljatelj": current_posiljatelj,
                             "Primatelj": current_primatelj,
+                            "OTP / Broj naloga": otp_broj,
                             "Tip palete": tip_palete,
                             "Količina (Kom)": 1,
                             "Cijena po pošiljci (€)": cijena_posiljke,
                             "Masa palete (KG)": masa,
-                            "CBM palete": cbm,
-                            "Opis stavke": opis_stavke
+                            "CBM palete": cbm
                         })
                     except:
                         pass
 
-        # Ograničavamo na točno 69 stavki ukoliko dođe do viška
+        # Ograničavanje točno na 69 stavki
         df_out = pd.DataFrame(all_rows)
         if len(df_out) > 69:
             df_out = df_out.iloc[:69]
