@@ -6,8 +6,8 @@ import io
 
 st.set_page_config(page_title="Englmayer Text PDF Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Točno 69 paleta - bez financijskih tekstova)")
-st.write("Učitajte tekstualni PDF. Ugrađen je strogi filter za uklanjanje financijskih redaka i ukupnih iznosa.")
+st.title("📦 Englmayer Parser (Točno 69 paleta unutar tablica)")
+st.write("Učitajte tekstualni PDF. Čitanje stavki ograničeno je isključivo na unutrašnjost tablica paleta.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
@@ -111,40 +111,50 @@ if uploaded_file is not None:
             if match_suma:
                 suma_eur = match_suma.group(1)
 
-            # 7. Čitanje isključivo pravih paleta uz stroge zabrane financijskih izraza
+            # 7. Strogo praćenje unutrašnjosti tablice paleta (od "Oznaka/Broj" do "Suma")
             palete_u_ovom_bloku = []
+            in_table = False
             
             for line in lines:
-                # Izričito preskačemo sve neželjene redove i financijske izraze vidljive na slici
-                zabrane = ["neto iznos", "temeljni kapital", "ukupno", "pdv", "suma eur", "uplaćen", "nije pronađeno", "opis usluge", "110", "197", "199"]
-                if any(z in line.lower() for z in zabrane):
+                if "Oznaka/Broj" in line or "Količi" in line:
+                    in_table = True
                     continue
                 
-                # Redak MORA sadržavati neki od tipova ambalaže ili oznaku otp da bi bio paleta
-                if any(term in line.lower() for term in ["ewp", "fp", "cll", "otp", "handelsware"]):
-                    nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
-                    if len(nums) >= 1:
-                        try:
-                            parts = line.split()
-                            kol_val = "1"
-                            for p in parts:
-                                if p.isdigit() and len(p) <= 2:
-                                    kol_val = p
-                                    break
+                # Čim naiđemo na redak "Suma" unutar tablice, zatvaramo tablicu
+                if in_table and line.startswith("Suma"):
+                    in_table = False
+                    continue
+                
+                if in_table:
+                    # Izričito ignoriramo neželjene i financijske retke
+                    zabrane = ["neto iznos", "temeljni kapital", "ukupno", "pdv", "suma eur", "uplaćen", "opis usluge", "110", "197", "199"]
+                    if any(z in line.lower() for z in zabrane):
+                        continue
+                        
+                    if any(term in line.lower() for term in ["ewp", "fp", "cll", "otp", "handelsware"]):
+                        nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
+                        if len(nums) >= 1:
+                            try:
+                                parts = line.split()
+                                kol_val = "1"
+                                for p in parts:
+                                    if p.isdigit() and len(p) <= 2:
+                                        kol_val = p
+                                        break
 
-                            masa_val = nums[0]
-                            cbm_val = nums[-1] if len(nums) > 1 else "0,00"
-                            
-                            palete_u_ovom_bloku.append({
-                                "Količina (Kom)": kol_val,
-                                "Oznaka/Broj stavke": line,
-                                "Masa palete (KG)": masa_val,
-                                "CBM palete": cbm_val
-                            })
-                        except:
-                            pass
+                                masa_val = nums[0]
+                                cbm_val = nums[-1] if len(nums) > 1 else "0,00"
+                                
+                                palete_u_ovom_bloku.append({
+                                    "Količina (Kom)": kol_val,
+                                    "Oznaka/Broj stavke": line,
+                                    "Masa palete (KG)": masa_val,
+                                    "CBM palete": cbm_val
+                                })
+                            except:
+                                pass
 
-            # Spremanje u konačnu tablicu (Suma EUR samo na prvu stavku)
+            # Spremanje u konačnu tablicu (Suma EUR samo na prvu stavku, bez praznih redaka)
             if palete_u_ovom_bloku:
                 for idx, paleta in enumerate(palete_u_ovom_bloku):
                     redak = osnovni_podaci.copy()
@@ -163,7 +173,7 @@ if uploaded_file is not None:
             st.success(f"Uspješno izvučeno točnih stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_tocno_69_paleta.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_tocno_69.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
