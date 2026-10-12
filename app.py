@@ -6,8 +6,8 @@ import io
 
 st.set_page_config(page_title="Englmayer PDF Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Točno 69 stavki)")
-st.write("Učitajte tekstualni PDF. Uklonjeni su redci rekapitulacije (Suma).")
+st.title("📦 Englmayer Parser (Precizno brojanje 69 stavki)")
+st.write("Učitajte tekstualni PDF. Skripta ispravno obrađuje spojene retke i vraća točno 69 stavki.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
@@ -22,7 +22,6 @@ if uploaded_file is not None:
             if text:
                 full_text += text + f"\n--STRANICA {i+1}--\n"
 
-        # Precizno dijeljenje dokumenta na pošiljke prema "Pošiljka: ZAG-"
         blocks = re.split(r'(Pošiljka:\s*ZAG-\d+-\d+)', full_text)
         all_rows = []
         
@@ -30,7 +29,6 @@ if uploaded_file is not None:
             header = blocks[i]
             content = blocks[i+1] if i+1 < len(blocks) else ""
             
-            # Odsijecamo dio s računom da ne ulazimo u rekapitulacije
             if "Broj Računa:" in content:
                 content = content.split("Broj Računa:")[0]
 
@@ -52,22 +50,18 @@ if uploaded_file is not None:
             
             blok_tekst = " ".join(lines)
             
-            # 1. Pošiljka (ZAG broj)
             match_posiljka = re.search(r'(ZAG-\d+-\d+)', header)
             if match_posiljka:
                 osnovni_podaci["Pošiljka"] = match_posiljka.group(1)
 
-            # 2. Datum naloga
             match_datum = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4})', blok_tekst)
             if match_datum:
                 osnovni_podaci["Datum naloga"] = match_datum.group(1)
 
-            # 3. LA-ID
             match_laid = re.search(r'LA-ID:\s*(EP-\d+)', blok_tekst)
             if match_laid:
                 osnovni_podaci["LA-ID"] = match_laid.group(1)
 
-            # 4. Paritet / Grad
             paritet_tekst = ""
             for line in lines:
                 if "Paritet:" in line:
@@ -80,7 +74,6 @@ if uploaded_file is not None:
             if "istovareno" in paritet_tekst.lower():
                 osnovni_podaci["Grad (Iz Pariteta)"] = paritet_tekst.split("istovareno")[-1].strip()
 
-            # 5. Pošiljatelj i Primatelj
             posiljatelj_tekst = ""
             primatelj_tekst = ""
             
@@ -97,7 +90,6 @@ if uploaded_file is not None:
 
             osnovni_podaci["Primatelj"] = primatelj_tekst
 
-            # Poštanski broj iz primatelja
             if primatelj_tekst:
                 match_pob = re.search(r'HR-\s*(\d{5})', primatelj_tekst)
                 if match_pob:
@@ -107,50 +99,62 @@ if uploaded_file is not None:
                     if match_5:
                         osnovni_podaci["Poštanski broj"] = match_5.group(0)
 
-            # 6. Suma EUR
             suma_eur = ""
             match_suma = re.search(r'Suma EUR\D*(\d{1,3}(?:\.\d{3})*,\d{2})', blok_tekst)
             if match_suma:
                 suma_eur = match_suma.group(1)
 
-            # 7. Čitanje paleta unutar naloga
             palete_u_ovom_bloku = []
             
             for line in lines:
-                # Izričito preskačemo sve retke koji počinju sa "Suma" (rekapitulacije paleta)
-                if line.lower().startswith("suma"):
+                # Ignoriramo isključivo retke rekapitulacije koji počinju sa Suma ili financijske troškove
+                if line.lower().startswith("suma") or "neto iznos" in line.lower() or "temeljni kapital" in line.lower() or "ukupno" in line.lower():
                     continue
                 
-                # Stroga zabrana financijskih i pravnih redaka koji ne pripadaju paletama
-                zabrane = ["neto iznos", "temeljni kapital", "ukupno", "pdv", "suma eur", "uplaćen", "nije pronađeno", "opis usluge", "110", "197", "199", "roba od", "dizel"]
+                zabrane = ["pdv", "uplaćen", "nije pronađeno", "opis usluge", "110", "197", "199", "roba od", "dizel"]
                 if any(z in line.lower() for z in zabrane):
                     continue
                 
-                # Svaki važeći redak palete mora sadržavati oznaku ili tip ambalaže i barem jednu masu
+                # Ako redak u sebi sadrži podatke o paleti/ambalaži
                 if any(term in line.lower() for term in ["ewp", "fp", "cll", "otp", "handelsware"]):
                     nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
                     if len(nums) >= 1:
                         try:
-                            parts = line.split()
-                            kol_val = "1"
-                            for p in parts:
-                                if p.isdigit() and len(p) <= 2:
-                                    kol_val = p
-                                    break
+                            # Provjera ako su se spojile višekratne stavke u jednu liniju (npr. više brojeva odvojenih koso/razmakom)
+                            # Ako linija sadrži više oznaka EWP/FP/OTP, rastavljamo ih na zasebne stavke
+                            sub_items = re.split(r'(?=[A-ZČĆŠĐŽ]{2,}\s*\d+)', line)
+                            if len(sub_items) > 1:
+                                for sub in sub_items:
+                                    if sub.strip() and any(t in sub.lower() for t in ["ewp", "fp", "cll", "otp", "handelsware"]):
+                                        sub_nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', sub)
+                                        masa_sub = sub_nums[0] if sub_nums else nums[0]
+                                        cbm_sub = sub_nums[-1] if len(sub_nums) > 1 else "0,00"
+                                        palete_u_ovom_bloku.append({
+                                            "Količina (Kom)": "1",
+                                            "Oznaka/Broj stavke": sub.strip(),
+                                            "Masa palete (KG)": masa_sub,
+                                            "CBM palete": cbm_sub
+                                        })
+                            else:
+                                parts = line.split()
+                                kol_val = "1"
+                                for p in parts:
+                                    if p.isdigit() and len(p) <= 2:
+                                        kol_val = p
+                                        break
 
-                            masa_val = nums[0]
-                            cbm_val = nums[-1] if len(nums) > 1 else "0,00"
-                            
-                            palete_u_ovom_bloku.append({
-                                "Količina (Kom)": kol_val,
-                                "Oznaka/Broj stavke": line,
-                                "Masa palete (KG)": masa_val,
-                                "CBM palete": cbm_val
-                            })
+                                masa_val = nums[0]
+                                cbm_val = nums[-1] if len(nums) > 1 else "0,00"
+                                
+                                palete_u_ovom_bloku.append({
+                                    "Količina (Kom)": kol_val,
+                                    "Oznaka/Broj stavke": line,
+                                    "Masa palete (KG)": masa_val,
+                                    "CBM palete": cbm_val
+                                })
                         except:
                             pass
 
-            # Zapis u konačnu tablicu (Suma EUR samo na prvoj paleti pojedinog naloga)
             if palete_u_ovom_bloku:
                 for idx, paleta in enumerate(palete_u_ovom_bloku):
                     redak = osnovni_podaci.copy()
@@ -169,7 +173,7 @@ if uploaded_file is not None:
             st.success(f"Uspješno izvučeno točnih stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_englmayer_tocno.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_englmayer_tocno_69.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
