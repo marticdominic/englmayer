@@ -6,8 +6,8 @@ import io
 
 st.set_page_config(page_title="Englmayer Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Fino podešavanje za 69 paleta)")
-st.write("Učitajte tekstualni PDF. Prošireno prepoznavanje stavki i masa.")
+st.title("📦 Englmayer Parser (Točno 69 stavki)")
+st.write("Učitajte tekstualni PDF. Stroga kontrola ambalaže i izlaznih redaka.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
@@ -109,18 +109,18 @@ if uploaded_file is not None:
             for line in lines:
                 line_lower = line.lower()
                 
-                # Izričito mičemo samo financije, zaglavlja i rekapitulacije
-                if any(k in line_lower for k in ["suma", "neto iznos", "temeljni kapital", "ukupno", "pdv", "uplaćen", "paritet:", "datum isporuke:", "la-id:", "pošiljatelj", "primatelj", "opis usluge"]):
+                # Izričito zabranjujemo sve redove s datumima, zaglavljima, sumama i metapodacima
+                if any(k in line_lower for k in ["suma", "neto iznos", "temeljni kapital", "ukupno", "pdv", "uplaćen", "paritet:", "datum isporuke:", "datum naloga", "la-id:", "pošiljatelj", "primatelj", "opis usluge", "broj računa"]):
                     continue
                 
                 if line_lower.startswith("110") or line_lower.startswith("197") or line_lower.startswith("199"):
                     continue
 
-                # Fleksibilnije traženje brojeva (masa s zarezom ili točkom)
-                nums = re.findall(r'\d{1,3}(?:[.,]\d{3})*[.,]\d+', line)
+                # REDAK MORA SADRŽAVATI AMBALAŽU I MASU (s decimalnim zarezom)
+                has_packaging = any(term in line_lower for term in ["ewp", "fp", "cll", "otp", "handelsware"])
+                nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
                 
-                # Ako redak sadrži broj ili ambalažu, smatramo ga stavkom
-                if nums or any(term in line_lower for term in ["ewp", "fp", "cll", "otp", "handelsware"]):
+                if has_packaging and len(nums) >= 1:
                     try:
                         parts = line.split()
                         kol_val = "1"
@@ -129,7 +129,7 @@ if uploaded_file is not None:
                                 kol_val = p
                                 break
 
-                        masa_val = nums[0] if nums else "0,00"
+                        masa_val = nums[0]
                         cbm_val = nums[-1] if len(nums) > 1 else "0,00"
                         
                         palete_u_ovom_bloku.append({
@@ -156,10 +156,10 @@ if uploaded_file is not None:
         df = pd.DataFrame(all_rows)
 
         if not df.empty:
-            st.success(f"Uspješno izvučeno stavki/paleta: {len(df)}")
+            st.success(f"Uspješno izvučeno točnih stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_englmayer_69.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_englmayer_tocno_69.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
