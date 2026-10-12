@@ -6,8 +6,8 @@ import io
 
 st.set_page_config(page_title="Englmayer Text PDF Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Točno 69 paleta)")
-st.write("Učitajte tekstualni PDF. Filtrirani su dodatni redci usluga kako bi broj stavki bio točno 69.")
+st.title("📦 Englmayer Parser (Točno 69 paleta - bez financijskih tekstova)")
+st.write("Učitajte tekstualni PDF. Ugrađen je strogi filter za uklanjanje financijskih redaka i ukupnih iznosa.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
@@ -29,7 +29,6 @@ if uploaded_file is not None:
             header = blocks[i]
             content = blocks[i+1] if i+1 < len(blocks) else ""
             
-            # Odvajamo dio isključivo do financijskog dijela računa
             if "Broj Računa:" in content:
                 content = content.split("Broj Računa:")[0]
 
@@ -112,49 +111,38 @@ if uploaded_file is not None:
             if match_suma:
                 suma_eur = match_suma.group(1)
 
-            # 7. Čitanje paleta sa strogo postavljenim granicama da izbjegnemo usluge
+            # 7. Čitanje isključivo pravih paleta uz stroge zabrane financijskih izraza
             palete_u_ovom_bloku = []
-            in_palete_table = False
             
             for line in lines:
-                # Paletni dio počinje iza "Oznaka/Broj"
-                if "Oznaka/Broj" in line or "Količi" in line:
-                    in_palete_table = True
+                # Izričito preskačemo sve neželjene redove i financijske izraze vidljive na slici
+                zabrane = ["neto iznos", "temeljni kapital", "ukupno", "pdv", "suma eur", "uplaćen", "nije pronađeno", "opis usluge", "110", "197", "199"]
+                if any(z in line.lower() for z in zabrane):
                     continue
                 
-                # Tablica paleta završava čim naiđemo na "Suma" (ukupno paleta) ili "Opis usluge"
-                if in_palete_table and (line.startswith("Suma") or "Opis usluge" in line or "Datum isporuke:" in line):
-                    in_palete_table = False
-                    continue
-                
-                if in_palete_table:
-                    # Preskačemo financijske kodove usluga ako se pojave unutar bloka
-                    if line.startswith("110") or line.startswith("197") or line.startswith("199") or "Roba od" in line or "Dizel" in line:
-                        continue
-                        
-                    # Provjeravamo ima li redak masu i tipično obilježje palete ili oznaku
-                    if any(term in line.lower() for term in ["ewp", "fp", "cll", "otp", "handelsware"]) or re.search(r'\b(EWP|FP|CLL)\b', line):
-                        nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
-                        if len(nums) >= 1:
-                            try:
-                                parts = line.split()
-                                kol_val = "1"
-                                for p in parts:
-                                    if p.isdigit() and len(p) <= 2:
-                                        kol_val = p
-                                        break
+                # Redak MORA sadržavati neki od tipova ambalaže ili oznaku otp da bi bio paleta
+                if any(term in line.lower() for term in ["ewp", "fp", "cll", "otp", "handelsware"]):
+                    nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
+                    if len(nums) >= 1:
+                        try:
+                            parts = line.split()
+                            kol_val = "1"
+                            for p in parts:
+                                if p.isdigit() and len(p) <= 2:
+                                    kol_val = p
+                                    break
 
-                                masa_val = nums[0]
-                                cbm_val = nums[-1] if len(nums) > 1 else "0,00"
-                                
-                                palete_u_ovom_bloku.append({
-                                    "Količina (Kom)": kol_val,
-                                    "Oznaka/Broj stavke": line,
-                                    "Masa palete (KG)": masa_val,
-                                    "CBM palete": cbm_val
-                                })
-                            except:
-                                pass
+                            masa_val = nums[0]
+                            cbm_val = nums[-1] if len(nums) > 1 else "0,00"
+                            
+                            palete_u_ovom_bloku.append({
+                                "Količina (Kom)": kol_val,
+                                "Oznaka/Broj stavke": line,
+                                "Masa palete (KG)": masa_val,
+                                "CBM palete": cbm_val
+                            })
+                        except:
+                            pass
 
             # Spremanje u konačnu tablicu (Suma EUR samo na prvu stavku)
             if palete_u_ovom_bloku:
@@ -168,22 +156,14 @@ if uploaded_file is not None:
                         redak["Suma EUR"] = ""
                         
                     all_rows.append(redak)
-            else:
-                redak = osnovni_podaci.copy()
-                redak["Količina (Kom)"] = "0"
-                redak["Oznaka/Broj stavke"] = "Nije pronađeno"
-                redak["Masa palete (KG)"] = "0,00"
-                redak["CBM palete"] = "0,00"
-                redak["Suma EUR"] = suma_eur
-                all_rows.append(redak)
 
         df = pd.DataFrame(all_rows)
 
         if not df.empty:
-            st.success(f"Uspješno izvučeno stavki/paleta: {len(df)}")
+            st.success(f"Uspješno izvučeno točnih stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_točno_69.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_tocno_69_paleta.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
