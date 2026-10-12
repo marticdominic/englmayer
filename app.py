@@ -6,8 +6,8 @@ import io
 
 st.set_page_config(page_title="Englmayer Text PDF Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Sa stupcem količine paleta)")
-st.write("Učitajte tekstualni PDF. Aplikacija izvlači palete, količinu, razdvaja troškove i uređuje pošiljatelje.")
+st.title("📦 Englmayer Parser (Uredan Excel s raspodjelom cijene)")
+st.write("Učitajte tekstualni PDF. Cijena (Suma EUR) upisuje se samo na prvu paletu svake pošiljke.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
@@ -93,7 +93,6 @@ if uploaded_file is not None:
                     primatelj_tekst = rec
 
             if posiljatelj_tekst and "makromikro" not in posiljatelj_tekst.lower():
-                osnovni_podaci["Pošiljka"] = osnovni_podaci["Pošiljka"] # drži original
                 osnovni_podaci["Pošiljatelj"] = posiljatelj_tekst
             else:
                 osnovni_podaci["Pošiljatelj"] = "Makromikro"
@@ -110,57 +109,71 @@ if uploaded_file is not None:
                     if match_5:
                         osnovni_podaci["Poštanski broj"] = match_5.group(0)
 
-            # 6. Suma EUR
+            # 6. Suma EUR (Ukupan iznos s dna računa)
             suma_eur = ""
             match_suma = re.search(r'Suma EUR\D*(\d{1,3}(?:\.\d{3})*,\d{2})', blok_tekst)
             if match_suma:
                 suma_eur = match_suma.group(1)
-            osnovni_podaci["Suma EUR"] = suma_eur
 
-            # 7. Čitanje isključivo tablice paleta uz izvlačenje količine
-            palete_pronadjene = False
+            # 7. Čitanje tablice paleta za ovaj blok
+            palete_u_ovom_bloku = []
             in_palete_table = False
             
             for line in lines:
                 if "Oznaka/Broj" in line:
                     in_palete_table = True
                     continue
-                if "Datum isporuke:" in line or "Opis usluge" in line or "Broj Računa:" in line:
-                    in_palete_table = False
+                if "Suma" in line or "Opis usluge" in line or "Broj Računa:" in line or "Strana" in line:
+                    if "Suma" in line:
+                        in_palete_table = False
+                    continue
                 
                 if in_palete_table:
-                    if line.startswith("Suma") or "Oznaka/Broj" in line or "Pak." in line:
-                        continue
-                    
                     if any(term in line for term in ["EWP", "FP", "CLL", "otp", "OTP", "Handelsware"]):
                         nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
                         if len(nums) >= 1:
                             try:
-                                # Pokušavamo pronaći količinu (broj komada) u retku (npr. broj 1, 2, 3...)
-                                kolicina_match = re.search(r'\b([1-9])\b', line)
-                                kol_val = kolicina_match.group(1) if kolicina_match else "1"
-                                
+                                parts = line.split()
+                                kol_val = "1"
+                                for p in parts:
+                                    if p.isdigit() and len(p) <= 2:
+                                        kol_val = p
+                                        break
+
                                 masa_val = nums[0]
                                 cbm_val = nums[-1] if len(nums) > 1 else "0,00"
                                 
-                                redak_palete = osnovni_podaci.copy()
-                                redak_palete["Količina (Kom)"] = kol_val
-                                redak_palete["Oznaka/Broj stavke"] = line
-                                redak_palete["Masa palete (KG)"] = masa_val
-                                redak_palete["CBM palete"] = cbm_val
-                                
-                                all_rows.append(redak_palete)
-                                palete_pronadjene = True
+                                palete_u_ovom_bloku.append({
+                                    "Količina (Kom)": kol_val,
+                                    "Oznaka/Broj stavke": line,
+                                    "Masa palete (KG)": masa_val,
+                                    "CBM palete": cbm_val
+                                })
                             except:
                                 pass
-            
-            if not palete_pronadjene:
-                redak_palete = osnovni_podaci.copy()
-                redak_palete["Količina (Kom)"] = "0"
-                redak_palete["Oznaka/Broj stavke"] = "Nije pronađeno"
-                redak_palete["Masa palete (KG)"] = "0,00"
-                redak_palete["CBM palete"] = "0,00"
-                all_rows.append(redak_palete)
+
+            # Ako smo pronašli palete u bloku, upisujemo ih u listu
+            if palete_u_ovom_bloku:
+                for idx, paleta in enumerate(palete_u_ovom_bloku):
+                    redak = osnovni_podaci.copy()
+                    redak.update(paleta)
+                    
+                    # Suma EUR se upisuje SAMO na prvu paletu u ovom bloku (nalogu)
+                    if idx == 0:
+                        redak["Suma EUR"] = suma_eur
+                    else:
+                        redak["Suma EUR"] = ""
+                        
+                    all_rows.append(redak)
+            else:
+                # Ako nema paleta, upisujemo prazan zapis s osnovnim podacima i sumom
+                redak = osnovni_podaci.copy()
+                redak["Količina (Kom)"] = "0"
+                redak["Oznaka/Broj stavke"] = "Nije pronađeno"
+                redak["Masa palete (KG)"] = "0,00"
+                redak["CBM palete"] = "0,00"
+                redak["Suma EUR"] = suma_eur
+                all_rows.append(redak)
 
         df = pd.DataFrame(all_rows)
 
@@ -168,7 +181,7 @@ if uploaded_file is not None:
             st.success(f"Uspješno izvučeno stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_sa_kolicinom.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_uredna_suma.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
