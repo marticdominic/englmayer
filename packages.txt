@@ -1,3 +1,4 @@
-tesseract-ocr
-tesseract-ocr-hrv
-poppler-utils
+streamlit
+pdfplumber
+pandas
+openpyxl
