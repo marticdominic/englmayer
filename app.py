@@ -8,7 +8,7 @@ import io
 st.set_page_config(page_title="Englmayer OCR Parser -> Excel", layout="wide")
 
 st.title("📦 Englmayer OCR Parser (Točno 64 palete)")
-st.write("Učitajte PDF specifikaciju. Aplikacija izvlači točno 64 stavke paleta i priprema Excel.")
+st.write("Učitajte PDF specifikaciju. Aplikacija uzima u obzir količine iz tablice i izvlači točan broj stavki.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
@@ -100,7 +100,7 @@ if uploaded_file is not None:
                 suma_eur = match_suma.group(1)
             osnovni_podaci["Suma EUR"] = suma_eur
 
-            # Parsiranje redaka paketa unutar tablice (hvata svaku stavku pojedinačno bez preskakanja)
+            # Detekcija stavki i provjera količina u tablici
             palete_pronadjene = False
             in_table = False
             
@@ -111,22 +111,26 @@ if uploaded_file is not None:
                 if "Datum isporuke:" in line or "Opis usluge" in line or "Suma EUR" in line:
                     in_table = False
                 
-                # Ako smo u tablici i redak nije ukupna suma
                 if in_table and not line.startswith("Suma") and not "Suma EUR" in line:
                     nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
-                    # Ako redak sadrži mase/dimenzije
                     if len(nums) >= 1:
                         try:
+                            # Tražimo količinu na početku retka (npr. broj 1, 3, 7...)
+                            kolicina_match = re.search(r'^\s*([1-9])\b', line)
+                            kolicina = int(kolicina_match.group(1)) if kolicina_match else 1
+                            
                             masa_val = nums[0]
                             cbm_val = nums[-1] if len(nums) > 1 else "0,00"
                             
-                            redak_palete = osnovni_podaci.copy()
-                            redak_palete["Masa palete (KG)"] = masa_val
-                            redak_palete["CBM palete"] = cbm_val
-                            redak_palete["Detalj paketa"] = line
-                            
-                            all_rows.append(redak_palete)
-                            palete_pronadjene = True
+                            # Generiramo onoliko redaka kolika je količina paleta u tom retku
+                            for _ in range(kolicina):
+                                redak_palete = osnovni_podaci.copy()
+                                redak_palete["Masa palete (KG)"] = masa_val
+                                redak_palete["CBM palete"] = cbm_val
+                                redak_palete["Detalj paketa"] = line
+                                
+                                all_rows.append(redak_palete)
+                                palete_pronadjene = True
                         except:
                             pass
             
@@ -143,7 +147,7 @@ if uploaded_file is not None:
             st.success(f"Uspješno izvučeno stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_tocno_64_paleta.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_64_palete.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
