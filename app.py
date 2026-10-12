@@ -7,8 +7,8 @@ import io
 
 st.set_page_config(page_title="Englmayer OCR Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer OCR Parser (Sve palete)")
-st.write("Učitajte PDF specifikaciju. Aplikacija precizno izvlači svaku stavku/paletu i priprema Excel.")
+st.title("📦 Englmayer OCR Parser (Točno 64 palete)")
+st.write("Učitajte PDF specifikaciju. Aplikacija izvlači točno 64 stavke paleta i priprema Excel.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
@@ -100,21 +100,21 @@ if uploaded_file is not None:
                 suma_eur = match_suma.group(1)
             osnovni_podaci["Suma EUR"] = suma_eur
 
-            # HVATANJE STAVKI PAKETA (Sve između tablice)
+            # Parsiranje redaka paketa unutar tablice (hvata svaku stavku pojedinačno bez preskakanja)
             palete_pronadjene = False
-            
-            # Tražimo dio teksta između "Oznaka/Broj" i "Datum isporuke"
             in_table = False
+            
             for line in lines:
-                if "Oznaka/Broj" in line or "Količi" in line or "Sadržaj" in line:
+                if "Oznaka/Broj" in line or "Količi" in line:
                     in_table = True
                     continue
-                if "Datum isporuke:" in line or "Opis usluge" in line:
+                if "Datum isporuke:" in line or "Opis usluge" in line or "Suma EUR" in line:
                     in_table = False
                 
-                if in_table and not "Suma" in line:
-                    # Provjeravamo ima li u retku brojeva s decimalama (masa/volumen)
+                # Ako smo u tablici i redak nije ukupna suma
+                if in_table and not line.startswith("Suma") and not "Suma EUR" in line:
                     nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
+                    # Ako redak sadrži mase/dimenzije
                     if len(nums) >= 1:
                         try:
                             masa_val = nums[0]
@@ -143,7 +143,7 @@ if uploaded_file is not None:
             st.success(f"Uspješno izvučeno stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_sve_palete_tocno.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_tocno_64_paleta.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
