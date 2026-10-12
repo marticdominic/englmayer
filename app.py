@@ -6,16 +6,16 @@ import io
 st.set_page_config(page_title="Englmayer Excel Parser -> Excel", layout="wide")
 
 st.title("📦 Englmayer Excel Parser (Točno 69 stavki)")
-st.write("Učitajte izvorni Excel dokument. Čisti podaci, ispravni primatelji, razdvojeni OTP brojevi i mase.")
+st.write("Učitajte izvorni Excel dokument. Svi podaci, uključujući datum dostave, primatelja i mase, sada su precizno povezani.")
 
 uploaded_file = st.file_uploader("Odaberite Excel datoteku (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
-    with st.spinner("Obrada i mapiranje podataka u tijeku..."):
+    with st.spinner("Obrada i precizno mapiranje podataka u tijeku..."):
         
         df_raw = pd.read_excel(uploaded_file, sheet_name=0)
         
-        # 1. Precizna mapa primatelja za svaku pošiljku (ZAG)
+        # 1. Mapiranje primatelja, datuma izrade i datuma dostave za svaku pošiljku (ZAG)
         zag_primatelj_map = {}
         zag_datum_izrade = {}
         zag_datum_dostave = {}
@@ -42,9 +42,14 @@ if uploaded_file is not None:
                 m_la = re.search(r'LA-ID:\s*(EP-\d+)', row_str)
                 if m_la and active_zag: zag_la_id[active_zag] = m_la.group(1)
                     
-            if 'Datum isporuke:' in row_str:
-                m_isp = re.search(r'(\d{2}\.\d{2}\.\d{4})', row_str)
-                if m_isp and active_zag: zag_datum_dostave[active_zag] = m_isp.group(1)
+            if 'Datum isporuke' in row_str:
+                for val in row_vals:
+                    if hasattr(val, 'strftime'):
+                        if active_zag: zag_datum_dostave[active_zag] = pd.to_datetime(val).strftime('%d.%m.%Y.')
+                    else:
+                        m_isp = re.search(r'(\d{2}\.\d{2}\.\d{4})', str(val))
+                        if m_isp and active_zag:
+                            zag_datum_dostave[active_zag] = m_isp.group(1)
 
             if 'Primatelj' in row_str:
                 parts = row_str.split('Primatelj')
@@ -102,6 +107,7 @@ if uploaded_file is not None:
                     la_id = zag_la_id.get(current_zag, "")
                     cijena_posiljke = price_map.get(la_id, "0.00")
                     primatelj_naziv = zag_primatelj_map.get(current_zag, "N/A")
+                    datum_dostave = zag_datum_dostave.get(current_zag, "")
                     
                     tip_palete = "EWP"
                     if "fp" in row_str.lower() or " FP " in row_str: tip_palete = "FP"
@@ -112,7 +118,7 @@ if uploaded_file is not None:
 
                     all_rows.append({
                         "Datum izrade": zag_datum_izrade.get(current_zag, ""),
-                        "Datum dostave": zag_datum_dostave.get(current_zag, ""),
+                        "Datum dostave": datum_dostave,
                         "Pošiljka": current_zag,
                         "LA-ID": la_id,
                         "Pošiljatelj": "Makromikro",
