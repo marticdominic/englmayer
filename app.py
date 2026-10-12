@@ -6,13 +6,13 @@ import io
 
 st.set_page_config(page_title="Englmayer Text PDF Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Bez uvlačenja retka 'Suma')")
-st.write("Učitajte tekstualni PDF. Redci sa sumom unutar tablice se sada strogo ignoriraju.")
+st.title("📦 Englmayer Parser (Direktno čitanje po nalogu)")
+st.write("Učitajte tekstualni PDF. Skripta čita točno od pošiljke do sume tablice.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
 if uploaded_file is not None:
-    with st.spinner("Čitanje i precizno parsiranje dokumenta u tijeku..."):
+    with st.spinner("Čitanje i parsiranje dokumenta u tijeku..."):
         
         reader = PdfReader(uploaded_file)
         full_text = ""
@@ -22,11 +22,15 @@ if uploaded_file is not None:
             if text:
                 full_text += text + f"\n--STRANICA {i+1}--\n"
 
-        blocks = full_text.split("Datum naloga:")
+        # Dijelimo cijeli dokument precizno po svakoj pošiljki (ZAG broj)
+        blocks = re.split(r'(Pošiljka:\s*ZAG-\d+-\d+)', full_text)
         all_rows = []
         
-        for block in blocks[1:]:
-            lines = [line.strip() for line in block.split("\n") if line.strip()]
+        for i in range(1, len(blocks), 2):
+            header = blocks[i]
+            content = blocks[i+1] if i+1 < len(blocks) else ""
+            
+            lines = [line.strip() for line in (header + "\n" + content).split("\n") if line.strip()]
             if not lines:
                 continue
                 
@@ -45,16 +49,18 @@ if uploaded_file is not None:
             blok_tekst = " ".join(lines)
             
             # 1. Pošiljka (ZAG broj)
-            match_posiljka = re.search(r'(ZAG-\d+-\d+)', blok_tekst)
+            match_posiljka = re.search(r'(ZAG-\d+-\d+)', header)
             if match_posiljka:
                 osnovni_podaci["Pošiljka"] = match_posiljka.group(1)
-            else:
-                continue
 
             # 2. Datum naloga
-            match_datum = re.search(r'(\d{2}\.\d{2}\.\d{4})', lines[0])
+            match_datum = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4})', blok_tekst)
             if match_datum:
                 osnovni_podaci["Datum naloga"] = match_datum.group(1)
+            else:
+                match_d2 = re.search(r'(\d{2}\.\d{2}\.\d{4})', blok_tekst)
+                if match_d2:
+                    osnovni_podaci["Datum naloga"] = match_d2.group(1)
 
             # 3. LA-ID
             match_laid = re.search(r'LA-ID:\s*(EP-\d+)', blok_tekst)
@@ -101,32 +107,32 @@ if uploaded_file is not None:
                     if match_5:
                         osnovni_podaci["Poštanski broj"] = match_5.group(0)
 
-            # 6. Suma EUR
+            # 6. Suma EUR (Ukupan iznos računa)
             suma_eur = ""
             match_suma = re.search(r'Suma EUR\D*(\d{1,3}(?:\.\d{3})*,\d{2})', blok_tekst)
             if match_suma:
                 suma_eur = match_suma.group(1)
 
-            # 7. Čitanje stavki paleta uz strogu zaštitu od retka "Suma"
+            # 7. Čitanje tablice paleta: krećemo od "Oznaka/Broj" i čitamo SVE dok ne naiđemo na redak koji počinje sa "Suma"
             palete_u_ovom_bloku = []
-            in_table = False
+            in_palete_table = False
             
             for line in lines:
                 if "Oznaka/Broj" in line or "Količi" in line:
-                    in_table = True
+                    in_palete_table = True
                     continue
                 
-                # Ako redak počinje sa "Suma", zatvaramo tablicu i PRESKAČEMO ga
-                if line.startswith("Suma") or "Datum isporuke:" in line or "Opis usluge" in line:
-                    if line.startswith("Suma"):
-                        in_table = False
+                # Ako naiđemo na redak "Suma" unutar tablice, tu stajemo (završila je tablica paleta)
+                if in_palete_table and line.startswith("Suma"):
+                    in_palete_table = False
                     continue
                 
-                if in_table:
-                    # Stroga provjera: ignoriramo ako redak sadrži riječ "Suma"
-                    if "Suma" in line:
+                if in_palete_table:
+                    # Izbjegavamo financijske usluge (110, 197) ako se pojave u tekstu
+                    if line.startswith("110") or line.startswith("197") or "Opis usluge" in line:
                         continue
-                        
+                    
+                    # Provjeravamo ima li redak obilježja palete/pakiranja i mase
                     if any(term in line for term in ["EWP", "FP", "CLL", "otp", "OTP", "Handelsware"]):
                         nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
                         if len(nums) >= 1:
@@ -150,7 +156,7 @@ if uploaded_file is not None:
                             except:
                                 pass
 
-            # Spremanje paleta u konačnu listu (Suma EUR samo na prvu stavku)
+            # Upis u glavnu tablicu (Suma EUR ide SAMO na prvu paletu u nizu)
             if palete_u_ovom_bloku:
                 for idx, paleta in enumerate(palete_u_ovom_bloku):
                     redak = osnovni_podaci.copy()
@@ -177,7 +183,7 @@ if uploaded_file is not None:
             st.success(f"Uspješno izvučeno stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_bez_sume.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_precizno_nalog.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
