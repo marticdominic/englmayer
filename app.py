@@ -7,22 +7,31 @@ import io
 
 st.set_page_config(page_title="Englmayer OCR Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer OCR Parser (Zaseban redak za svaku paletu)")
-st.write("Učitajte PDF specifikaciju. Aplikacija bilježi svaki redak oznake palete kao zasebnu stavku u Excelu.")
+st.title("📦 Englmayer OCR Parser (S vizualnim pregledom teksta)")
+st.write("Učitajte PDF specifikaciju. Aplikacija čita dokument putem OCR-a, prikazuje vizualni ispis prepoznatog teksta i generira Excel s točnim brojem stavki.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
 if uploaded_file is not None:
-    with st.spinner("Obrada dokumenta u tijeku... Molimo pričekajte..."):
+    with st.spinner("Obrada dokumenata, OCR i analiza u tijeku... Molimo pričekajte..."):
         
         pdf_bytes = uploaded_file.read()
         full_text = ""
+        page_texts = {}
         
+        # Pretvorba stranica u slike i OCR čitanje
         images = convert_from_bytes(pdf_bytes)
         for i, img in enumerate(images):
             ocr_text = pytesseract.image_to_string(img, lang='hrv')
+            page_texts[f"Stranica {i+1}"] = ocr_text
             full_text += ocr_text + f"\n--STRANICA {i+1}--\n"
 
+        # Vizualni prikaz OCR teksta u Streamlitu (da vidite kako aplikacija čita PDF)
+        with st.expander("🔍 Vizualni pregled OCR teksta (Kako aplikacija čita PDF po stranicama)"):
+            selected_page = st.selectbox("Odaberite stranicu za pregled", list(page_texts.keys()))
+            st.text_area("Prepoznati tekst sa slike:", page_texts[selected_page], height=300)
+
+        # Parsiranje blokova pošiljaka
         blocks = full_text.split("Datum naloga:")
         all_rows = []
         
@@ -100,7 +109,7 @@ if uploaded_file is not None:
                 suma_eur = match_suma.group(1)
             osnovni_podaci["Suma EUR"] = suma_eur
 
-            # Čitanje svakog retka palete unutar tablice (preskačemo redak "Suma")
+            # Detekcija stavki i provjera količina u tablici
             palete_pronadjene = False
             in_table = False
             
@@ -111,22 +120,25 @@ if uploaded_file is not None:
                 if "Datum isporuke:" in line or "Opis usluge" in line or "Suma EUR" in line:
                     in_table = False
                 
-                # Ako smo u tablici i redak NIJE redak ukupne sume
                 if in_table and not line.startswith("Suma") and not "Suma EUR" in line:
-                    # Tražimo retke koji sadrže oznaku (npr. otp, OTP) ili mase s decimalama
                     nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
-                    if len(nums) >= 1 or "otp" in line.lower():
+                    if len(nums) >= 1:
                         try:
-                            masa_val = nums[0] if len(nums) >= 1 else "0,00"
-                            cbm_val = nums[-1] if len(nums) >= 2 else "0,00"
+                            # Izvlačenje količine s početka retka
+                            kolicina_match = re.search(r'^\s*([1-9])\b', line)
+                            kolicina = int(kolicina_match.group(1)) if kolicina_match else 1
                             
-                            redak_palete = osnovni_podaci.copy()
-                            redak_palete["Masa palete (KG)"] = masa_val
-                            redak_palete["CBM palete"] = cbm_val
-                            redak_palete["Detalj paketa"] = line
+                            masa_val = nums[0]
+                            cbm_val = nums[-1] if len(nums) > 1 else "0,00"
                             
-                            all_rows.append(redak_palete)
-                            palete_pronadjene = True
+                            for _ in range(kolicina):
+                                redak_palete = osnovni_podaci.copy()
+                                redak_palete["Masa palete (KG)"] = masa_val
+                                redak_palete["CBM palete"] = cbm_val
+                                redak_palete["Detalj paketa"] = line
+                                
+                                all_rows.append(redak_palete)
+                                palete_pronadjene = True
                         except:
                             pass
             
@@ -143,7 +155,7 @@ if uploaded_file is not None:
             st.success(f"Uspješno izvučeno stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_sve_stavke.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_vizualno_izvuceno.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
