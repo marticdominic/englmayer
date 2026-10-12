@@ -6,8 +6,8 @@ import io
 
 st.set_page_config(page_title="Englmayer Text PDF Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Precizno odvajanje paleta i troškova)")
-st.write("Učitajte tekstualni PDF. Aplikacija sada precizno razdvaja palete od troškova usluga prijevoza.")
+st.title("📦 Englmayer Parser (Palete + Provjera Pošiljatelja)")
+st.write("Učitajte tekstualni PDF. Aplikacija izvlači palete, razdvaja troškove te ispravno zapisuje pošiljatelja.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
@@ -38,6 +38,7 @@ if uploaded_file is not None:
                 "Pošiljka": "",
                 "LA-ID": "",
                 "Grad (Iz Pariteta)": "",
+                "Pošiljatelj": "",
                 "Primatelj": "",
                 "Poštanski broj": "",
                 "Datum isporuke": "",
@@ -74,16 +75,32 @@ if uploaded_file is not None:
             if "istovareno" in paritet_tekst.lower():
                 osnovni_podaci["Grad (Iz Pariteta)"] = paritet_tekst.split("istovareno")[-1].strip()
 
-            # 5. Primatelj i Poštanski broj
+            # 5. Pošiljatelj i Primatelj
+            posiljatelj_tekst = ""
             primatelj_tekst = ""
+            
             for i, line in enumerate(lines):
+                if "Pošiljatelj/dobavljač" in line or "Pošiljatelj" in line:
+                    pos_rec = line.replace("Pošiljatelj/dobavljač", "").replace("Pošiljatelj", "").strip()
+                    if not pos_rec and i + 1 < len(lines):
+                        pos_rec = lines[i+1]
+                    posiljatelj_tekst = pos_rec
+                
                 if "Primatelj" in line:
                     rec = line.replace("Primatelj", "").strip()
                     if not rec and i + 1 < len(lines):
                         rec = lines[i+1]
                     primatelj_tekst = rec
-                    osnovni_podaci["Primatelj"] = rec
 
+            # Provjera pošiljatelja: ako nije Makromikro, zabilježi ga
+            if posiljatelj_tekst and "makromikro" not in posiljatelj_tekst.lower():
+                osnovni_podaci["Pošiljatelj"] = posiljatelj_tekst
+            else:
+                osnovni_podaci["Pošiljatelj"] = "Makromikro"
+
+            osnovni_podaci["Primatelj"] = primatelj_tekst
+
+            # Poštanski broj iz primatelja
             if primatelj_tekst:
                 match_pob = re.search(r'HR-\s*(\d{5})', primatelj_tekst)
                 if match_pob:
@@ -100,7 +117,7 @@ if uploaded_file is not None:
                 suma_eur = match_suma.group(1)
             osnovni_podaci["Suma EUR"] = suma_eur
 
-            # 7. Čitanje ISKLJUČIVO tablice paleta (od "Oznaka/Broj" do "Datum isporuke" ili "Opis usluge")
+            # 7. Čitanje isključivo tablice paleta
             palete_pronadjene = False
             in_palete_table = False
             
@@ -108,16 +125,13 @@ if uploaded_file is not None:
                 if "Oznaka/Broj" in line:
                     in_palete_table = True
                     continue
-                # Kada dođemo do datuma isporuke ili opisa usluga, izlazimo iz tablice paleta
                 if "Datum isporuke:" in line or "Opis usluge" in line or "Broj Računa:" in line:
                     in_palete_table = False
                 
                 if in_palete_table:
-                    # Preskačemo redak sume i zaglavlja
                     if line.startswith("Suma") or "Oznaka/Broj" in line or "Pak." in line:
                         continue
                     
-                    # Provjeravamo sadrži li redak tip ambalaže (EWP, FP, CLL) ili oznaku palete
                     if any(term in line for term in ["EWP", "FP", "CLL", "otp", "OTP", "Handelsware"]):
                         nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
                         if len(nums) >= 1:
@@ -125,7 +139,6 @@ if uploaded_file is not None:
                                 masa_val = nums[0]
                                 cbm_val = nums[-1] if len(nums) > 1 else "0,00"
                                 
-                                # Čistimo naziv oznake
                                 redak_palete = osnovni_podaci.copy()
                                 redak_palete["Oznaka/Broj stavke"] = line
                                 redak_palete["Masa palete (KG)"] = masa_val
@@ -149,7 +162,7 @@ if uploaded_file is not None:
             st.success(f"Uspješno izvučeno stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_palete_cisto.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_posiljatelj_uredjen.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
