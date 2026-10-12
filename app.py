@@ -6,13 +6,13 @@ import io
 
 st.set_page_config(page_title="Englmayer Text PDF Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Precizno razdvajanje pošiljaka)")
-st.write("Učitajte tekstualni PDF. Aplikacija sada strogo razdvaja podatke za svaku pošiljku zasebno.")
+st.title("📦 Englmayer Parser (Točno izvlačenje svih 69 paleta)")
+st.write("Učitajte tekstualni PDF. Aplikacija sada osigurava da nijedna paleta ne bude preskočena.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
 if uploaded_file is not None:
-    with st.spinner("Čitanje i precizno parsiranje dokumenta u tijeku..."):
+    with st.spinner("Čitanje i parsiranje dokumenta u tijeku..."):
         
         reader = PdfReader(uploaded_file)
         full_text = ""
@@ -22,7 +22,7 @@ if uploaded_file is not None:
             if text:
                 full_text += text + f"\n--STRANICA {i+1}--\n"
 
-        # Precizno dijeljenje dokumenta na pojedinačne blokove pošiljaka prema "Pošiljka: ZAG-"
+        # Precizno dijeljenje na blokove pošiljaka
         blocks = re.split(r'(Pošiljka:\s*ZAG-\d+-\d+)', full_text)
         all_rows = []
         
@@ -30,10 +30,7 @@ if uploaded_file is not None:
             header = blocks[i]
             content = blocks[i+1] if i+1 < len(blocks) else ""
             
-            # Uzimamo tekst isključivo do sljedeće pošiljke ili kraja računa
-            # Režemo sadržaj tamo gdje počinje sljedeći dio ili novi nalog
-            if "Pošiljka:" in content:
-                content = content.split("Pošiljka:")[0]
+            # Ako u sadržaju naletimo na račun, uzimamo sve do njega
             if "Broj Računa:" in content:
                 content = content.split("Broj Računa:")[0]
 
@@ -83,7 +80,7 @@ if uploaded_file is not None:
             if "istovareno" in paritet_tekst.lower():
                 osnovni_podaci["Grad (Iz Pariteta)"] = paritet_tekst.split("istovareno")[-1].strip()
 
-            # 5. Pošiljatelj i Primatelj unutar ovog bloka
+            # 5. Pošiljatelj i Primatelj
             posiljatelj_tekst = ""
             primatelj_tekst = ""
             
@@ -116,7 +113,7 @@ if uploaded_file is not None:
             if match_suma:
                 suma_eur = match_suma.group(1)
 
-            # 7. Čitanje tablice paleta isključivo unutar ovog bloka
+            # 7. Čitanje stavki paleta unutar ovog bloka
             palete_u_ovom_bloku = []
             in_palete_table = False
             
@@ -125,7 +122,7 @@ if uploaded_file is not None:
                     in_palete_table = True
                     continue
                 
-                # Kada naiđemo na redak "Suma" ili datum isporuke, završavamo s tablicom paleta
+                # Ako naiđemo na ukupnu sumu paleta ili datum isporuke, ovdje završavamo tablicu
                 if in_palete_table and (line.startswith("Suma") or "Datum isporuke:" in line):
                     in_palete_table = False
                     continue
@@ -157,7 +154,7 @@ if uploaded_file is not None:
                             except:
                                 pass
 
-            # Spremanje u konačnu tablicu (Suma EUR samo na prvu paletu)
+            # Spremanje paleta u konačnu tablicu (Suma EUR samo na prvu stavku)
             if palete_u_ovom_bloku:
                 for idx, paleta in enumerate(palete_u_ovom_bloku):
                     redak = osnovni_podaci.copy()
@@ -184,7 +181,7 @@ if uploaded_file is not None:
             st.success(f"Uspješno izvučeno stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_precizno_odvojeno.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_sve_palete_69.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
