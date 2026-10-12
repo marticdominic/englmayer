@@ -6,8 +6,8 @@ import io
 
 st.set_page_config(page_title="Englmayer Text PDF Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Palete + Provjera Pošiljatelja)")
-st.write("Učitajte tekstualni PDF. Aplikacija izvlači palete, razdvaja troškove te ispravno zapisuje pošiljatelja.")
+st.title("📦 Englmayer Parser (Sa stupcem količine paleta)")
+st.write("Učitajte tekstualni PDF. Aplikacija izvlači palete, količinu, razdvaja troškove i uređuje pošiljatelje.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
@@ -92,8 +92,8 @@ if uploaded_file is not None:
                         rec = lines[i+1]
                     primatelj_tekst = rec
 
-            # Provjera pošiljatelja: ako nije Makromikro, zabilježi ga
             if posiljatelj_tekst and "makromikro" not in posiljatelj_tekst.lower():
+                osnovni_podaci["Pošiljka"] = osnovni_podaci["Pošiljka"] # drži original
                 osnovni_podaci["Pošiljatelj"] = posiljatelj_tekst
             else:
                 osnovni_podaci["Pošiljatelj"] = "Makromikro"
@@ -117,7 +117,7 @@ if uploaded_file is not None:
                 suma_eur = match_suma.group(1)
             osnovni_podaci["Suma EUR"] = suma_eur
 
-            # 7. Čitanje isključivo tablice paleta
+            # 7. Čitanje isključivo tablice paleta uz izvlačenje količine
             palete_pronadjene = False
             in_palete_table = False
             
@@ -136,10 +136,15 @@ if uploaded_file is not None:
                         nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
                         if len(nums) >= 1:
                             try:
+                                # Pokušavamo pronaći količinu (broj komada) u retku (npr. broj 1, 2, 3...)
+                                kolicina_match = re.search(r'\b([1-9])\b', line)
+                                kol_val = kolicina_match.group(1) if kolicina_match else "1"
+                                
                                 masa_val = nums[0]
                                 cbm_val = nums[-1] if len(nums) > 1 else "0,00"
                                 
                                 redak_palete = osnovni_podaci.copy()
+                                redak_palete["Količina (Kom)"] = kol_val
                                 redak_palete["Oznaka/Broj stavke"] = line
                                 redak_palete["Masa palete (KG)"] = masa_val
                                 redak_palete["CBM palete"] = cbm_val
@@ -151,6 +156,7 @@ if uploaded_file is not None:
             
             if not palete_pronadjene:
                 redak_palete = osnovni_podaci.copy()
+                redak_palete["Količina (Kom)"] = "0"
                 redak_palete["Oznaka/Broj stavke"] = "Nije pronađeno"
                 redak_palete["Masa palete (KG)"] = "0,00"
                 redak_palete["CBM palete"] = "0,00"
@@ -162,7 +168,7 @@ if uploaded_file is not None:
             st.success(f"Uspješno izvučeno stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_posiljatelj_uredjen.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_sa_kolicinom.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
