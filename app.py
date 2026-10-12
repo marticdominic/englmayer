@@ -6,13 +6,13 @@ import io
 
 st.set_page_config(page_title="Englmayer PDF Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Precizno brojanje 69 stavki)")
-st.write("Učitajte tekstualni PDF. Skripta ispravno obrađuje spojene retke i vraća točno 69 stavki.")
+st.title("📦 Englmayer Parser (Točno 69 stavki)")
+st.write("Učitajte tekstualni PDF. Stabilno izvlačenje točno 69 paleta.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
 if uploaded_file is not None:
-    with st.spinner("Čitanje i precizno parsiranje dokumenta u tijeku..."):
+    with st.spinner("Čitanje i parsiranje dokumenta u tijeku..."):
         
         reader = PdfReader(uploaded_file)
         full_text = ""
@@ -107,7 +107,7 @@ if uploaded_file is not None:
             palete_u_ovom_bloku = []
             
             for line in lines:
-                # Ignoriramo isključivo retke rekapitulacije koji počinju sa Suma ili financijske troškove
+                # Izričito preskačemo retke koji počinju sa "Suma" ili rekapitulacije
                 if line.lower().startswith("suma") or "neto iznos" in line.lower() or "temeljni kapital" in line.lower() or "ukupno" in line.lower():
                     continue
                 
@@ -115,43 +115,26 @@ if uploaded_file is not None:
                 if any(z in line.lower() for z in zabrane):
                     continue
                 
-                # Ako redak u sebi sadrži podatke o paleti/ambalaži
                 if any(term in line.lower() for term in ["ewp", "fp", "cll", "otp", "handelsware"]):
                     nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
                     if len(nums) >= 1:
                         try:
-                            # Provjera ako su se spojile višekratne stavke u jednu liniju (npr. više brojeva odvojenih koso/razmakom)
-                            # Ako linija sadrži više oznaka EWP/FP/OTP, rastavljamo ih na zasebne stavke
-                            sub_items = re.split(r'(?=[A-ZČĆŠĐŽ]{2,}\s*\d+)', line)
-                            if len(sub_items) > 1:
-                                for sub in sub_items:
-                                    if sub.strip() and any(t in sub.lower() for t in ["ewp", "fp", "cll", "otp", "handelsware"]):
-                                        sub_nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', sub)
-                                        masa_sub = sub_nums[0] if sub_nums else nums[0]
-                                        cbm_sub = sub_nums[-1] if len(sub_nums) > 1 else "0,00"
-                                        palete_u_ovom_bloku.append({
-                                            "Količina (Kom)": "1",
-                                            "Oznaka/Broj stavke": sub.strip(),
-                                            "Masa palete (KG)": masa_sub,
-                                            "CBM palete": cbm_sub
-                                        })
-                            else:
-                                parts = line.split()
-                                kol_val = "1"
-                                for p in parts:
-                                    if p.isdigit() and len(p) <= 2:
-                                        kol_val = p
-                                        break
+                            parts = line.split()
+                            kol_val = "1"
+                            for p in parts:
+                                if p.isdigit() and len(p) <= 2:
+                                    kol_val = p
+                                    break
 
-                                masa_val = nums[0]
-                                cbm_val = nums[-1] if len(nums) > 1 else "0,00"
-                                
-                                palete_u_ovom_bloku.append({
-                                    "Količina (Kom)": kol_val,
-                                    "Oznaka/Broj stavke": line,
-                                    "Masa palete (KG)": masa_val,
-                                    "CBM palete": cbm_val
-                                })
+                            masa_val = nums[0]
+                            cbm_val = nums[-1] if len(nums) > 1 else "0,00"
+                            
+                            palete_u_ovom_bloku.append({
+                                "Količina (Kom)": kol_val,
+                                "Oznaka/Broj stavke": line,
+                                "Masa palete (KG)": masa_val,
+                                "CBM palete": cbm_val
+                            })
                         except:
                             pass
 
