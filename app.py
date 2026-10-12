@@ -6,15 +6,14 @@ import io
 
 st.set_page_config(page_title="Englmayer Text PDF Parser -> Excel", layout="wide")
 
-st.title("📦 Englmayer Parser (Točno 70 paleta)")
-st.write("Učitajte tekstualni PDF. Aplikacija čita dokument, strogo filtrira sume i zaglavlja te izvlači točan broj paleta u Excel.")
+st.title("📦 Englmayer Parser (Precizno odvajanje paleta i troškova)")
+st.write("Učitajte tekstualni PDF. Aplikacija sada precizno razdvaja palete od troškova usluga prijevoza.")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
 if uploaded_file is not None:
-    with st.spinner("Čitanje i parsiranje tekstualnog PDF-a u tijeku..."):
+    with st.spinner("Čitanje i precizno parsiranje dokumenta u tijeku..."):
         
-        # Čitanje PDF-a preko pypdf
         reader = PdfReader(uploaded_file)
         full_text = ""
         
@@ -23,11 +22,9 @@ if uploaded_file is not None:
             if text:
                 full_text += text + f"\n--STRANICA {i+1}--\n"
 
-        # Vizualni pregled sirovog teksta
         with st.expander("🔍 Provjera izvučenog tekstualnog sadržaja"):
             st.text_area("Sirovi tekst iz PDF-a:", full_text, height=300)
 
-        # Dijeljenje po blokovima naloga
         blocks = full_text.split("Datum naloga:")
         all_rows = []
         
@@ -54,7 +51,7 @@ if uploaded_file is not None:
             if match_datum:
                 osnovni_podaci["Datum naloga"] = match_datum.group(1)
 
-            # 2. Broj pošiljke (ZAG)
+            # 2. Pošiljka (ZAG broj)
             match_posiljka = re.search(r'(ZAG-\d+-\d+)', blok_tekst)
             if match_posiljka:
                 osnovni_podaci["Pošiljka"] = match_posiljka.group(1)
@@ -103,40 +100,41 @@ if uploaded_file is not None:
                 suma_eur = match_suma.group(1)
             osnovni_podaci["Suma EUR"] = suma_eur
 
-            # 7. Čitanje stavki paleta uz strogu filtraciju viška
+            # 7. Čitanje ISKLJUČIVO tablice paleta (od "Oznaka/Broj" do "Datum isporuke" ili "Opis usluge")
             palete_pronadjene = False
-            in_table = False
+            in_palete_table = False
             
             for line in lines:
-                if "Oznaka/Broj" in line or "Količi" in line:
-                    in_table = True
+                if "Oznaka/Broj" in line:
+                    in_palete_table = True
                     continue
-                if "Datum isporuke:" in line or "Opis usluge" in line or "Suma EUR" in line:
-                    in_table = False
+                # Kada dođemo do datuma isporuke ili opisa usluga, izlazimo iz tablice paleta
+                if "Datum isporuke:" in line or "Opis usluge" in line or "Broj Računa:" in line:
+                    in_palete_table = False
                 
-                if in_table:
-                    # Strogo preskačemo redak ako počinje sa Suma ili sadrži zaglavlja
-                    if line.startswith("Suma") or "Suma EUR" in line or "Oznaka/Broj" in line or "Pak." in line:
+                if in_palete_table:
+                    # Preskačemo redak sume i zaglavlja
+                    if line.startswith("Suma") or "Oznaka/Broj" in line or "Pak." in line:
                         continue
                     
-                    nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
-                    if len(nums) >= 1:
-                        try:
-                            masa_val = nums[0]
-                            cbm_val = nums[-1] if len(nums) > 1 else "0,00"
-                            
-                            oznaka_match = re.split(r'\s+[1-9]\s+', line)
-                            oznaka_palete = oznaka_match[0] if len(oznaka_match) > 0 else line
-                            
-                            redak_palete = osnovni_podaci.copy()
-                            redak_palete["Oznaka/Broj stavke"] = oznaka_palete
-                            redak_palete["Masa palete (KG)"] = masa_val
-                            redak_palete["CBM palete"] = cbm_val
-                            
-                            all_rows.append(redak_palete)
-                            palete_pronadjene = True
-                        except:
-                            pass
+                    # Provjeravamo sadrži li redak tip ambalaže (EWP, FP, CLL) ili oznaku palete
+                    if any(term in line for term in ["EWP", "FP", "CLL", "otp", "OTP", "Handelsware"]):
+                        nums = re.findall(r'\d{1,3}(?:\.\d{3})*,\d+', line)
+                        if len(nums) >= 1:
+                            try:
+                                masa_val = nums[0]
+                                cbm_val = nums[-1] if len(nums) > 1 else "0,00"
+                                
+                                # Čistimo naziv oznake
+                                redak_palete = osnovni_podaci.copy()
+                                redak_palete["Oznaka/Broj stavke"] = line
+                                redak_palete["Masa palete (KG)"] = masa_val
+                                redak_palete["CBM palete"] = cbm_val
+                                
+                                all_rows.append(redak_palete)
+                                palete_pronadjene = True
+                            except:
+                                pass
             
             if not palete_pronadjene:
                 redak_palete = osnovni_podaci.copy()
@@ -151,7 +149,7 @@ if uploaded_file is not None:
             st.success(f"Uspješno izvučeno stavki/paleta: {len(df)}")
             st.dataframe(df)
 
-            file_name_xlsx = uploaded_file.name.replace(".pdf", "_tocno_70_paleta.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".pdf", "_palete_cisto.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
