@@ -7,7 +7,7 @@ import io
 st.set_page_config(page_title="Englmayer PDF Parser -> Excel", layout="wide")
 
 st.title("📦 Englmayer Parser (Točno 69 stavki)")
-st.write("Učitajte tekstualni PDF. Aplikacija precizno izvlači sve palete i uklanja financijske retke.")
+st.write("Učitajte tekstualni PDF. Uklonjeni su redci rekapitulacije (Suma).")
 
 uploaded_file = st.file_uploader("Odaberite PDF datoteku", type=["pdf"])
 
@@ -117,6 +117,10 @@ if uploaded_file is not None:
             palete_u_ovom_bloku = []
             
             for line in lines:
+                # Izričito preskačemo sve retke koji počinju sa "Suma" (rekapitulacije paleta)
+                if line.lower().startswith("suma"):
+                    continue
+                
                 # Stroga zabrana financijskih i pravnih redaka koji ne pripadaju paletama
                 zabrane = ["neto iznos", "temeljni kapital", "ukupno", "pdv", "suma eur", "uplaćen", "nije pronađeno", "opis usluge", "110", "197", "199", "roba od", "dizel"]
                 if any(z in line.lower() for z in zabrane):
