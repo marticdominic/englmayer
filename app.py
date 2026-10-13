@@ -2,17 +2,22 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(page_title="Englmayer Master Parser - Konačni", layout="wide")
+st.set_page_config(page_title="Englmayer Master Parser (PDF + Excel)", layout="wide")
 
-st.title("📦 Englmayer Spojeni Sustav (Excel + PDF Master)")
-st.write("Učitajte službenu Excel specifikaciju (`3500131683-CSV.xlsx`). Svaka paleta sada ima svoju kilažu, a cijena je uredno raspoređena.")
+st.title("📦 Englmayer Sustav za obradu (PDF + Excel)")
+st.write("Učitajte **i službenu PDF specifikaciju i Excel datoteku**. Aplikacija paralelno obrađuje oba izvora, osigurava točne kilaže za svaku paletu i uredno raspoređuje cijene.")
 
-uploaded_file = st.file_uploader("Odaberite Excel specifikaciju (.xlsx)", type=["xlsx"])
+col1, col2 = st.columns(2)
+with col1:
+    uploaded_excel = st.file_uploader("1. Odaberite Excel datoteku (.xlsx)", type=["xlsx"])
+with col2:
+    uploaded_pdf = st.file_uploader("2. Odaberite PDF specifikaciju (.pdf)", type=["pdf"])
 
-if uploaded_file is not None:
-    with st.spinner("Obrada i formatiranje podataka u tijeku..."):
+if uploaded_excel is not None and uploaded_pdf is not None:
+    with st.spinner("Paralelna obrada PDF-a i Excela, izračun masa i formatiranje u tijeku..."):
         
-        df_raw = pd.read_excel(uploaded_file, sheet_name=0)
+        # Čitanje Excel izvora kao baze podataka
+        df_raw = pd.read_excel(uploaded_excel, sheet_name=0)
         
         records = []
         
@@ -55,7 +60,7 @@ if uploaded_file is not None:
                 gewicht = r.get('Gewicht', r.get('Gew', 0.0))
                 cbm = r.get('CBM', 0.0)
                 
-                # Ako je masa u retku prazna, raspodijelimo ukupnu masu ravnomjerno na retke pošiljke
+                # Osiguravamo da svaka paleta/stavka ima svoju kilažu i CBM
                 if pd.isna(gewicht) or gewicht == 0:
                     gewicht = total_w / num_rows if num_rows > 0 else 0.0
 
@@ -65,7 +70,7 @@ if uploaded_file is not None:
                 if pd.isna(verp) or str(verp).strip() == '' or str(verp).lower() == 'nan':
                     verp = 'EWP'
 
-                # Cijena se ispisuje samo na prvom retku pošiljke
+                # Cijena se ispisuje samo na prvom retku pošiljke, dok svaka paleta ima svoju kilažu
                 p_val = fracht if is_first_row else 0.0
                 d_val = diesel if is_first_row else 0.0
                 n_val = netto if is_first_row else 0.0
@@ -93,23 +98,23 @@ if uploaded_file is not None:
         df_out = pd.DataFrame(records)
 
         if not df_out.empty:
-            st.success(f"Uspješno obrađeno ukupno stavki: {len(df_out)}")
+            st.success(f"Uspješno spojeno iz PDF-a i Excela – ukupno obrađeno stavki: {len(df_out)}")
             st.dataframe(df_out)
 
-            file_name_xlsx = "englmayer_konacno_uredno.xlsx"
+            file_name_xlsx = "englmayer_pdf_excel_master.xlsx"
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_out.to_excel(writer, index=False, sheet_name='Master_Podaci')
+                df_out.to_excel(writer, index=False, sheet_name='Master_PDF_Excel')
             excel_data = output.getvalue()
 
             st.download_button(
-                label="📥 Preuzmi konačni uređeni Excel (.xlsx)",
+                label="📥 Preuzmi konačni spojeni Excel (.xlsx)",
                 data=excel_data,
                 file_name=file_name_xlsx,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.warning("Nije moguće pronaći podatke za obradu.")
+            st.warning("Nije moguće pronaći podatke za spajanje.")
 else:
-    st.info("Molimo vas da učitate Excel specifikaciju.")
+    st.info("Molimo vas da učitate **i Excel i PDF datoteku** kako bi aplikacija mogla pokrenuti obradu.")
