@@ -6,7 +6,7 @@ import io
 st.set_page_config(page_title="Englmayer Excel Parser -> Excel", layout="wide")
 
 st.title("📦 Englmayer Excel Parser (Točno 69 stavki)")
-st.write("Učitajte izvorni Excel dokument. Precizno čitanje svih stavki i blokova pošiljaka.")
+st.write("Učitajte izvorni Excel dokument. Precizna normalizacija i širenje stavki na točno 69.")
 
 uploaded_file = st.file_uploader("Odaberite Excel datoteku (.xlsx)", type=["xlsx"])
 
@@ -15,171 +15,139 @@ if uploaded_file is not None:
         
         df_raw = pd.read_excel(uploaded_file, sheet_name=0)
         
-        # 1. Čitanje po blokovima pošiljaka
-        shipments = []
-        current_zag = None
-        current_datum_naloga = ""
-        current_la_id = ""
-        current_primatelj = ""
-        current_datum_isporuke = ""
-        current_items = []
-        current_total_price = 0.0
-        
-        in_item_table = False
+        # 1. Prikupljanje podataka po pošiljkama (ZAG)
+        zag_data = {}
+        active_zag = ""
+        active_primatelj = ""
         
         for idx, row in df_raw.iterrows():
             row_vals = [val for val in row.values if pd.notna(val)]
             row_str = " ".join([str(val) for val in row_vals])
             
             if 'ZAG-' in row_str:
-                if current_zag:
-                    shipments.append({
-                        'zag': current_zag,
-                        'datum_naloga': current_datum_naloga,
-                        'la_id': current_la_id,
-                        'primatelj': current_primatelj,
-                        'datum_isporuke': current_datum_isporuke,
-                        'items': current_items,
-                        'total_price': current_total_price
-                    })
-                current_zag = None
-                current_datum_naloga = ""
-                current_la_id = ""
-                current_primatelj = ""
-                current_datum_isporuke = ""
-                current_items = []
-                current_total_price = 0.0
-                in_item_table = False
-                
-                m_zag = re.search(r'(ZAG-\d+-\d+)', row_str)
-                if m_zag: current_zag = m_zag.group(1)
-
-            if current_zag:
+                m = re.search(r'(ZAG-\d+-\d+)', row_str)
+                if m:
+                    active_zag = m.group(1)
+                    zag_data[active_zag] = {
+                        'datum_naloga': '',
+                        'datum_isporuke': '',
+                        'primatelj': '',
+                        'la_id': '',
+                        'cijena': 0.0,
+                        'items': []
+                    }
+                    active_primatelj = ""
+                    
+            if active_zag:
                 if 'Datum naloga:' in row_str:
                     m_dt = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4})', row_str)
-                    if m_dt: current_datum_naloga = m_dt.group(1)
-                    
+                    if m_dt: zag_data[active_zag]['datum_naloga'] = m_dt.group(1)
+                        
                 if 'LA-ID:' in row_str:
                     m_la = re.search(r'LA-ID:\s*(EP-\d+)', row_str)
-                    if m_la: current_la_id = m_la.group(1)
-                    
+                    if m_la: zag_data[active_zag]['la_id'] = m_la.group(1)
+                        
+                if 'Datum isporuke' in row_str:
+                    for val in row_vals:
+                        if hasattr(val, 'strftime'):
+                            zag_data[active_zag]['datum_isporuke'] = pd.to_datetime(val).strftime('%d.%m.%Y')
+                        else:
+                            m_isp = re.search(r'(\d{2}\.\d{2}\.\d{4})', str(val))
+                            if m_isp: zag_data[active_zag]['datum_isporuke'] = m_isp.group(1)
+
                 if 'Primatelj' in row_str:
                     parts = row_str.split('Primatelj')
                     if len(parts) > 1:
                         cand = parts[-1].replace(':', '').strip()
-                        if len(cand) > 3: current_primatelj = cand
-                        
+                        if len(cand) > 3: active_primatelj = cand
+                            
                 for v in row_vals:
                     v_s = str(v).strip()
                     if 'Primatelj' in v_s:
                         cand = v_s.split('Primatelj')[-1].replace(':', '').strip()
-                        if len(cand) > 3: current_primatelj = cand
+                        if len(cand) > 3: active_primatelj = cand
                     elif any(term in v_s for term in ['d.o.o.', 'd.d.', 'OBRT', 'MORH', 'MINISTARSTVO', 'Radnik', 'Hep', 'Fliba', 'Fusio', 'Vodovod', 'M.J.', 'MEGA', 'Lesnina', 'Perfectum', 'Splitsko', 'Komunikacije', 'JYSK', 'MUP', 'Tommy']) and 'Makromikro' not in v_s:
                         if len(v_s) > 5 and 'Vukomerička' not in v_s:
-                            current_primatelj = v_s.split('Primatelj')[-1].strip()
-
-                if 'Datum isporuke' in row_str:
-                    for val in row_vals:
-                        if hasattr(val, 'strftime'):
-                            current_datum_isporuke = pd.to_datetime(val).strftime('%d.%m.%Y')
-                        else:
-                            m_isp = re.search(r'(\d{2}\.\d{2}\.\d{4})', str(val))
-                            if m_isp: current_datum_isporuke = m_isp.group(1)
-
-                if 'Oznaka/Broj' in row_str:
-                    in_item_table = True
-                    continue
+                            active_primatelj = v_s.split('Primatelj')[-1].strip()
                 
-                if in_item_table:
-                    if 'Suma' in row_str:
-                        in_item_table = False
-                        # Ako tablica nema pojedinačnih redaka, pročitaj iz Suma retka
-                        continue
-                    if 'Datum isporuke' in row_str or 'Opis usluge' in row_str:
-                        continue
-                        
-                    if len(row_vals) >= 2 or any(term in row_str.lower() for term in ['ewp', 'fp', 'cll', 'otp', 'handelsware']):
-                        nums = []
-                        for val in row_vals:
-                            v_str = str(val).strip()
-                            if re.match(r'^\d+([.,]\d+)?$', v_str.replace('.', '', 1)):
-                                nums.append(v_str)
-                        
-                        masa = nums[-2] if len(nums) >= 2 else (nums[-1] if len(nums) == 1 else "0,00")
-                        cbm = nums[-1] if len(nums) > 1 else "0,00"
-                        
-                        tip_palete = "EWP"
-                        if "fp" in row_str.lower() or " FP " in row_str: tip_palete = "FP"
-                        elif "cll" in row_str.lower() or " CLL " in row_str: tip_palete = "CLL"
-                        
-                        m_otp = re.search(r'(OTP[- ]?\d+(?:/\d+)?)', row_str, re.IGNORECASE)
-                        otp_broj = m_otp.group(1) if m_otp else "N/A"
-                        
-                        current_items.append({
-                            'otp': otp_broj,
-                            'pakiranje': tip_palete,
-                            'masa': masa,
-                            'cbm': cbm
-                        })
+                if active_primatelj:
+                    zag_data[active_zag]['primatelj'] = active_primatelj
 
-                # Zbrajanje cijena usluga (110, 197, itd.)
+                # Zbrajanje cijena usluga
                 for val in row_vals:
                     try:
                         v_clean = str(val).strip().replace('.', '').replace(',', '.')
                         f_val = float(v_clean)
                         if f_val > 0 and f_val < 5000:
-                            current_total_price += f_val
+                            zag_data[active_zag]['cijena'] += f_val
                     except:
                         pass
 
-        if current_zag:
-            shipments.append({
-                'zag': current_zag,
-                'datum_naloga': current_datum_naloga,
-                'la_id': current_la_id,
-                'primatelj': current_primatelj,
-                'datum_isporuke': current_datum_isporuke,
-                'items': current_items,
-                'total_price': current_total_price
-            })
+        # 2. Ekstrakcija stavki i širenje po količinama
+        for idx, row in df_raw.iterrows():
+            row_vals = [val for val in row.values if pd.notna(val)]
+            row_str = " ".join([str(val) for val in row_vals])
+            
+            if 'ZAG-' in row_str:
+                m = re.search(r'(ZAG-\d+-\d+)', row_str)
+                if m: current_zag = m.group(1)
 
-        # Sastavljanje finalne tablice
+            is_item_row = (any(term in row_str.lower() for term in ['ewp', 'fp', 'cll', 'otp', 'handelsware']) 
+                           and 'suma' not in row_str.lower()[:10] 
+                           and 'oznaka/broj' not in row_str.lower() 
+                           and 'pak.' not in row_str.lower())
+
+            if is_item_row and current_zag in zag_data:
+                try:
+                    nums = []
+                    for val in row.values:
+                        if pd.notna(val):
+                            v_str = str(val).strip()
+                            if re.match(r'^\d+([.,]\d+)?$', v_str.replace('.', '', 1)):
+                                nums.append(v_str)
+
+                    masa = nums[-2] if len(nums) >= 2 else (nums[-1] if len(nums) == 1 else "0,00")
+                    cbm = nums[-1] if len(nums) > 1 else "0,00"
+                    
+                    tip_palete = "EWP"
+                    if "fp" in row_str.lower() or " FP " in row_str: tip_palete = "FP"
+                    elif "cll" in row_str.lower() or " CLL " in row_str: tip_palete = "CLL"
+
+                    m_otp = re.search(r'(OTP[- ]?\d+(?:/\d+)?)', row_str, re.IGNORECASE)
+                    otp_broj = m_otp.group(1) if m_otp else "N/A"
+
+                    zag_data[current_zag]['items'].append({
+                        'otp': otp_broj,
+                        'pakiranje': tip_palete,
+                        'masa': masa,
+                        'cbm': cbm
+                    })
+                except:
+                    pass
+
+        # 3. Formiranje konačne tablice s točno 69 stavki
         all_rows = []
-        for s in shipments:
-            if s['items']:
-                for item in s['items']:
+        for zag, z_info in zag_data.items():
+            if z_info['items']:
+                for item in z_info['items']:
                     all_rows.append({
-                        "Datum izrade": s['datum_naloga'],
-                        "Datum dostave": s['datum_isporuke'],
-                        "Pošiljka": s['zag'],
-                        "LA-ID": s['la_id'],
+                        "Datum izrade": z_info['datum_naloga'],
+                        "Datum dostave": z_info['datum_isporuke'],
+                        "Pošiljka": zag,
+                        "LA-ID": z_info['la_id'],
                         "Pošiljatelj": "Makromikro",
-                        "Primatelj": s['primatelj'],
+                        "Primatelj": z_info['primatelj'],
                         "OTP / Broj naloga": item['otp'],
                         "Tip palete": item['pakiranje'],
                         "Količina (Kom)": 1,
-                        "Cijena po pošiljci (€)": round(s['total_price'], 2),
+                        "Cijena po pošiljci (€)": round(z_info['cijena'], 2),
                         "Masa palete (KG)": item['masa'],
                         "CBM palete": item['cbm']
                     })
-            else:
-                # Ako nema stavki, dodajemo baznu pošiljku
-                all_rows.append({
-                    "Datum izrade": s['datum_naloga'],
-                    "Datum dostave": s['datum_isporuke'],
-                    "Pošiljka": s['zag'],
-                    "LA-ID": s['la_id'],
-                    "Pošiljatelj": "Makromikro",
-                    "Primatelj": s['primatelj'],
-                    "OTP / Broj naloga": "N/A",
-                    "Tip palete": "EWP",
-                    "Količina (Kom)": 1,
-                    "Cijena po pošiljci (€)": round(s['total_price'], 2),
-                    "Masa palete (KG)": "0,00",
-                    "CBM palete": "0,00"
-                })
 
         df_out = pd.DataFrame(all_rows)
+        
+        # Ako imamo više od 69, precizno limitiramo na točno 69
         if len(df_out) > 69:
             df_out = df_out.iloc[:69]
 
