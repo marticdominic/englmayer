@@ -1,172 +1,91 @@
 import streamlit as st
 import pandas as pd
-import re
 import io
 
-st.set_page_config(page_title="Englmayer Excel Parser -> Excel", layout="wide")
+st.set_page_config(page_title="Englmayer Specifikacija Parser", layout="wide")
 
-st.title("📦 Englmayer Excel Parser (Točno 69 stavki)")
-st.write("Učitajte izvorni Excel dokument. Precizna normalizacija i širenje stavki na točno 69.")
+st.title("📦 Englmayer Specifikacija Parser (Službeni Račun)")
+st.write("Učitajte službenu Excel specifikaciju (npr. `3500131683-CSV.xlsx`) za automatsko čitanje svih stavaka, pošiljaka i financijskih iznosa.")
 
-uploaded_file = st.file_uploader("Odaberite Excel datoteku (.xlsx)", type=["xlsx"])
+uploaded_file = st.file_uploader("Odaberite Excel specifikaciju (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
-    with st.spinner("Detaljna obrada i mapiranje podataka u tijeku..."):
+    with st.spinner("Obrada i spajanje podataka u tijeku..."):
         
+        # Čitanje izvornog Excel izvoza specifikacije
         df_raw = pd.read_excel(uploaded_file, sheet_name=0)
         
-        # 1. Prikupljanje podataka po pošiljkama (ZAG)
-        zag_data = {}
-        active_zag = ""
-        active_primatelj = ""
+        processed_rows = []
         
         for idx, row in df_raw.iterrows():
-            row_vals = [val for val in row.values if pd.notna(val)]
-            row_str = " ".join([str(val) for val in row_vals])
+            # Provjera osnovnih podataka pošiljke
+            zag = row.get('Sendungs-ID', 'N/A')
+            datum_izrade = row.get('Beleg-Datum', '')
+            datum_dostave = row.get('Leistungsdatum', '')
+            la_id = row.get('Beleg-Id', '') # ili odgovarajući ID
+            referenca = row.get('Referenz', '')
             
-            if 'ZAG-' in row_str:
-                m = re.search(r'(ZAG-\d+-\d+)', row_str)
-                if m:
-                    active_zag = m.group(1)
-                    zag_data[active_zag] = {
-                        'datum_naloga': '',
-                        'datum_isporuke': '',
-                        'primatelj': '',
-                        'la_id': '',
-                        'cijena': 0.0,
-                        'items': []
-                    }
-                    active_primatelj = ""
-                    
-            if active_zag:
-                if 'Datum naloga:' in row_str:
-                    m_dt = re.search(r'Datum naloga:\s*(\d{2}\.\d{2}\.\d{4})', row_str)
-                    if m_dt: zag_data[active_zag]['datum_naloga'] = m_dt.group(1)
-                        
-                if 'LA-ID:' in row_str:
-                    m_la = re.search(r'LA-ID:\s*(EP-\d+)', row_str)
-                    if m_la: zag_data[active_zag]['la_id'] = m_la.group(1)
-                        
-                if 'Datum isporuke' in row_str:
-                    for val in row_vals:
-                        if hasattr(val, 'strftime'):
-                            zag_data[active_zag]['datum_isporuke'] = pd.to_datetime(val).strftime('%d.%m.%Y')
-                        else:
-                            m_isp = re.search(r'(\d{2}\.\d{2}\.\d{4})', str(val))
-                            if m_isp: zag_data[active_zag]['datum_isporuke'] = m_isp.group(1)
-
-                if 'Primatelj' in row_str:
-                    parts = row_str.split('Primatelj')
-                    if len(parts) > 1:
-                        cand = parts[-1].replace(':', '').strip()
-                        if len(cand) > 3: active_primatelj = cand
-                            
-                for v in row_vals:
-                    v_s = str(v).strip()
-                    if 'Primatelj' in v_s:
-                        cand = v_s.split('Primatelj')[-1].replace(':', '').strip()
-                        if len(cand) > 3: active_primatelj = cand
-                    elif any(term in v_s for term in ['d.o.o.', 'd.d.', 'OBRT', 'MORH', 'MINISTARSTVO', 'Radnik', 'Hep', 'Fliba', 'Fusio', 'Vodovod', 'M.J.', 'MEGA', 'Lesnina', 'Perfectum', 'Splitsko', 'Komunikacije', 'JYSK', 'MUP', 'Tommy']) and 'Makromikro' not in v_s:
-                        if len(v_s) > 5 and 'Vukomerička' not in v_s:
-                            active_primatelj = v_s.split('Primatelj')[-1].strip()
+            posiljatelj = row.get('Name Absender', 'Makromikro Grupa d.o.o.')
+            primatelj = row.get('Name Empfänger', 'N/A')
+            adresa_primatelja = row.get('Straße Empfänger', '')
+            grad_primatelja = row.get('Ort Empfänger', '')
+            
+            otp_broj = row.get('Zeichen/Nr.', 'N/A')
+            kolicina = row.get('Anz', 1)
+            if pd.isna(kolicina) or kolicina <= 0:
+                kolicina = 1
+            else:
+                kolicina = int(kolicina)
                 
-                if active_primatelj:
-                    zag_data[active_zag]['primatelj'] = active_primatelj
-
-                # Zbrajanje cijena usluga
-                for val in row_vals:
-                    try:
-                        v_clean = str(val).strip().replace('.', '').replace(',', '.')
-                        f_val = float(v_clean)
-                        if f_val > 0 and f_val < 5000:
-                            zag_data[active_zag]['cijena'] += f_val
-                    except:
-                        pass
-
-        # 2. Ekstrakcija stavki i širenje po količinama
-        for idx, row in df_raw.iterrows():
-            row_vals = [val for val in row.values if pd.notna(val)]
-            row_str = " ".join([str(val) for val in row_vals])
+            pakiranje = row.get('Verp', row.get('Verpackung', 'EWP'))
+            masa = row.get('Gewicht', row.get('Gew', 0.0))
+            cbm = row.get('CBM', 0.0)
             
-            if 'ZAG-' in row_str:
-                m = re.search(r'(ZAG-\d+-\d+)', row_str)
-                if m: current_zag = m.group(1)
+            # Financijski dio (franko, dizel dodatak, ukupno)
+            fracht = row.get('Frachten (€)', row.get('Frachten', 0.0))
+            diesel = row.get('Dieselzuschlag (€)', row.get('Dieselzuschlag', 0.0))
+            ukupno_eur = row.get('Nettobetrag (€)', row.get('Nettobetrag', 0.0))
+            
+            if pd.isna(ukupno_eur) or ukupno_eur == 0:
+                ukupno_eur = float(fracht or 0) + float(diesel or 0)
 
-            is_item_row = (any(term in row_str.lower() for term in ['ewp', 'fp', 'cll', 'otp', 'handelsware']) 
-                           and 'suma' not in row_str.lower()[:10] 
-                           and 'oznaka/broj' not in row_str.lower() 
-                           and 'pak.' not in row_str.lower())
+            # Ako pošiljka ima količinu > 1, možemo je raspisati ili zadržati zapis
+            processed_rows.append({
+                "Datum naloga": datum_izrade,
+                "Datum dostave": datum_dostave,
+                "Pošiljka": zag,
+                "Referenca": referenca,
+                "Pošiljatelj": posiljatelj,
+                "Primatelj": primatelj,
+                "Grad primatelja": grad_primatelja,
+                "OTP / Broj naloga": otp_broj,
+                "Tip palete": pakiranje,
+                "Količina (Kom)": kolicina,
+                "Masa (KG)": masa,
+                "CBM": cbm,
+                "Prijevoz (€)": fracht,
+                "Dizel dodatak (€)": diesel,
+                "Ukupno neto (€)": ukupno_eur
+            })
 
-            if is_item_row and current_zag in zag_data:
-                try:
-                    nums = []
-                    for val in row.values:
-                        if pd.notna(val):
-                            v_str = str(val).strip()
-                            if re.match(r'^\d+([.,]\d+)?$', v_str.replace('.', '', 1)):
-                                nums.append(v_str)
-
-                    masa = nums[-2] if len(nums) >= 2 else (nums[-1] if len(nums) == 1 else "0,00")
-                    cbm = nums[-1] if len(nums) > 1 else "0,00"
-                    
-                    tip_palete = "EWP"
-                    if "fp" in row_str.lower() or " FP " in row_str: tip_palete = "FP"
-                    elif "cll" in row_str.lower() or " CLL " in row_str: tip_palete = "CLL"
-
-                    m_otp = re.search(r'(OTP[- ]?\d+(?:/\d+)?)', row_str, re.IGNORECASE)
-                    otp_broj = m_otp.group(1) if m_otp else "N/A"
-
-                    zag_data[current_zag]['items'].append({
-                        'otp': otp_broj,
-                        'pakiranje': tip_palete,
-                        'masa': masa,
-                        'cbm': cbm
-                    })
-                except:
-                    pass
-
-        # 3. Formiranje konačne tablice s točno 69 stavki
-        all_rows = []
-        for zag, z_info in zag_data.items():
-            if z_info['items']:
-                for item in z_info['items']:
-                    all_rows.append({
-                        "Datum izrade": z_info['datum_naloga'],
-                        "Datum dostave": z_info['datum_isporuke'],
-                        "Pošiljka": zag,
-                        "LA-ID": z_info['la_id'],
-                        "Pošiljatelj": "Makromikro",
-                        "Primatelj": z_info['primatelj'],
-                        "OTP / Broj naloga": item['otp'],
-                        "Tip palete": item['pakiranje'],
-                        "Količina (Kom)": 1,
-                        "Cijena po pošiljci (€)": round(z_info['cijena'], 2),
-                        "Masa palete (KG)": item['masa'],
-                        "CBM palete": item['cbm']
-                    })
-
-        df_out = pd.DataFrame(all_rows)
-        
-        # Ako imamo više od 69, precizno limitiramo na točno 69
-        if len(df_out) > 69:
-            df_out = df_out.iloc[:69]
+        df_out = pd.DataFrame(processed_rows)
 
         if not df_out.empty:
-            st.success(f"Uspješno izvučeno točnih stavki/paleta: {len(df_out)}")
+            st.success(f"Uspješno obrađeno redaka specifikacije: {len(df_out)}")
             st.dataframe(df_out)
 
-            file_name_xlsx = uploaded_file.name.replace(".xlsx", "_englmayer_69_uredno.xlsx")
+            file_name_xlsx = uploaded_file.name.replace(".xlsx", "_uredna_specifikacija.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_out.to_excel(writer, index=False, sheet_name='Posiljke')
+                df_out.to_excel(writer, index=False, sheet_name='Specifikacija')
             excel_data = output.getvalue()
 
             st.download_button(
-                label="📥 Preuzmi čisti Excel (.xlsx)",
+                label="📥 Preuzmi konačni uređeni Excel (.xlsx)",
                 data=excel_data,
                 file_name=file_name_xlsx,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.warning("Nije moguće pronaći podatke u Excel datoteci.")
+            st.warning("Nije moguće pronaći podatke u priloženoj datoteci.")
