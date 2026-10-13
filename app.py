@@ -2,90 +2,107 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(page_title="Englmayer Konačni Spojeni Sustav", layout="wide")
+st.set_page_config(page_title="Englmayer Master Parser", layout="wide")
 
-st.title("📦 Englmayer Spojeni Sustav (Sve pošiljke i reference)")
-st.write("Učitajte službenu Excel specifikaciju (`3500131683-CSV.xlsx`) izvedenu iz PDF-a. Aplikacija detaljno raspisuje svaku pošiljku i svaku referencu/paletu.")
+st.title("📦 Englmayer Master Sustav (Sve pošiljke, palete i cijene)")
+st.write("Učitajte službenu Excel specifikaciju (`3500131683-CSV.xlsx`). Aplikacija automatski čisti, spaja i strukturira sve podatke o pošiljkama.")
 
 uploaded_file = st.file_uploader("Odaberite Excel specifikaciju (.xlsx)", type=["xlsx"])
 
 if uploaded_file is not None:
-    with st.spinner("Detaljna obrada i raspisivanje svih pošiljaka i referenci u tijeku..."):
+    with st.spinner("Obrada, čišćenje i spajanje svih podataka u tijeku..."):
         
         df_raw = pd.read_excel(uploaded_file, sheet_name=0)
         
-        detailed_rows = []
+        cleaned_records = []
         
-        # Prolazimo kroz svaki redak u izvozu specifikacije (gdje svaki redak ili grupa predstavlja stavku/referencu)
-        for idx, row in df_raw.iterrows():
-            zag = row.get('Sendungs-ID', 'N/A')
-            if pd.isna(zag):
-                continue
-                
-            datum_izrade = row.get('Beleg-Datum', '')
-            datum_dostave = row.get('Leistungsdatum', '')
-            referenca = row.get('Referenz', '')
+        # Grupiramo po pošiljkama kako bismo osigurali da svaka stavka povuče točne financije i atribute
+        for zag, group in df_raw.groupby('Sendungs-ID'):
+            first_row = group.iloc[0]
             
-            posiljatelj = row.get('Name Absender', 'Makromikro Grupa d.o.o.')
-            primatelj = row.get('Name Empfänger', 'N/A')
-            grad_primatelja = row.get('Ort Empfänger', '')
+            datum_izrade = first_row.get('Beleg-Datum', '')
+            datum_dostave = first_row.get('Leistungsdatum', '')
+            referenca = first_row.get('Referenz', '')
             
-            # Podaci o paleti / stavci
-            otp_broj = row.get('Zeichen/Nr.', 'N/A')
-            kolicina = row.get('Anz', 1)
-            if pd.isna(kolicina) or kolicina <= 0:
-                kolicina = 1
-            else:
-                kolicina = int(kolicina)
-                
-            pakiranje = row.get('Verp', row.get('Verpackung', 'EWP'))
-            masa = row.get('Gewicht', row.get('Gew', 0.0))
-            cbm = row.get('CBM', 0.0)
+            posiljatelj = first_row.get('Name Absender', 'Makromikro Grupa d.o.o.')
+            primatelj = first_row.get('Name Empfänger', 'N/A')
+            adresa_primatelja = first_row.get('Straße Empfänger', '')
+            grad_primatelja = first_row.get('Ort Empfänger', '')
             
-            # Financije
-            fracht = row.get('Frachten', 0.0)
-            diesel = row.get('Dieselzuschlag', 0.0)
-            ukupno_eur = row.get('Nettobetrag', 0.0)
-            
-            if pd.isna(ukupno_eur) or ukupno_eur == 0:
-                ukupno_eur = float(fracht or 0) + float(diesel or 0)
+            # Financije po pošiljci
+            fracht = first_row.get('Frachten', 0.0)
+            diesel = first_row.get('Dieselzuschlag', 0.0)
+            netto = first_row.get('Nettobetrag', 0.0)
+            if pd.isna(netto) or netto == 0:
+                netto = float(fracht or 0) + float(diesel or 0)
 
-            detailed_rows.append({
-                "Datum izrade": datum_izrade,
-                "Datum dostave": datum_dostave,
-                "Pošiljka": zag,
-                "Referenca": referenca,
-                "Pošiljatelj": posiljatelj,
-                "Primatelj": primatelj,
-                "Grad primatelja": grad_primatelja,
-                "OTP / Oznaka": otp_broj if pd.notna(otp_broj) else "N/A",
-                "Tip palete": pakiranje if pd.notna(pakiranje) else "EWP",
-                "Količina (Kom)": kolicina,
-                "Masa (KG)": masa if pd.notna(masa) else 0.0,
-                "CBM": cbm if pd.notna(cbm) else 0.0,
-                "Prijevoz (€)": fracht if pd.notna(fracht) else 0.0,
-                "Dizel dodatak (€)": diesel if pd.notna(diesel) else 0.0,
-                "Ukupno neto (€)": ukupno_eur if pd.notna(ukupno_eur) else 0.0
-            })
+            # Pronalazimo valjane vrijednosti težina i CBM-a unutar grupe ako su u nekom retku prazne
+            valid_weights = group[group['Gewicht'].notna() & (group['Gewicht'] > 0)]['Gewicht']
+            default_weight = valid_weights.iloc[0] if len(valid_weights) > 0 else 0.0
 
-        df_out = pd.DataFrame(detailed_rows)
+            valid_cbm = group[group['CBM'].notna() & (group['CBM'] > 0)]['CBM']
+            default_cbm = valid_cbm.iloc[0] if len(valid_cbm) > 0 else 0.0
+
+            for idx, r in group.iterrows():
+                otp = r.get('Zeichen/Nr.', 'N/A')
+                anz = r.get('Anz', 1)
+                if pd.isna(anz) or anz <= 0:
+                    anz = 1
+                else:
+                    anz = int(anz)
+                    
+                verp = r.get('Verp', r.get('Verpackung', 'EWP'))
+                gewicht = r.get('Gewicht', r.get('Gew', default_weight))
+                cbm = r.get('CBM', default_cbm)
+                
+                if pd.isna(gewicht) or gewicht == 0:
+                    gewicht = default_weight
+                if pd.isna(cbm) or cbm == 0:
+                    cbm = default_cbm
+                if pd.isna(otp) or str(otp).strip() == '':
+                    otp = 'N/A'
+                if pd.isna(verp) or str(verp).strip() == '':
+                    verp = 'EWP'
+
+                cleaned_records.append({
+                    "Datum izrade": datum_izrade,
+                    "Datum dostave": datum_dostave,
+                    "Pošiljka (Sendungs-ID)": zag,
+                    "Referenca": referenca,
+                    "Pošiljatelj": posiljatelj,
+                    "Primatelj": primatelj,
+                    "Adresa primatelja": adresa_primatelja,
+                    "Grad primatelja": grad_primatelja,
+                    "OTP / Broj naloga": otp,
+                    "Tip palete": verp,
+                    "Količina (Kom)": anz,
+                    "Masa (KG)": gewicht,
+                    "CBM": cbm,
+                    "Prijevoz (€)": fracht if pd.notna(fracht) else 0.0,
+                    "Dizel dodatak (€)": diesel if pd.notna(diesel) else 0.0,
+                    "Ukupno neto (€)": netto if pd.notna(netto) else 0.0
+                })
+
+        df_out = pd.DataFrame(cleaned_records)
 
         if not df_out.empty:
-            st.success(f"Uspješno obrađeno i raspisano ukupno stavki/referenci: {len(df_out)}")
+            st.success(f"Uspješno obrađeno i očišćeno ukupno stavki: {len(df_out)}")
             st.dataframe(df_out)
 
-            file_name_xlsx = "englmayer_sve_stavke_i_reference.xlsx"
+            file_name_xlsx = uploaded_file.name.replace(".xlsx", "_MASTER_uredjeno.xlsx")
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_out.to_excel(writer, index=False, sheet_name='Sve_Reference')
+                df_out.to_excel(writer, index=False, sheet_name='Cisti_Podaci')
             excel_data = output.getvalue()
 
             st.download_button(
-                label="📥 Preuzmi konačni Excel sa svim stavkama (.xlsx)",
+                label="📥 Preuzmi konačni uređeni Excel sa svim podacima (.xlsx)",
                 data=excel_data,
                 file_name=file_name_xlsx,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.warning("Nije moguće pronaći podatke u priloženoj datoteci.")
+            st.warning("Nije moguće pronaći podatke za obradu.")
+else:
+    st.info("Molimo vas da učitate Excel specifikaciju.")
