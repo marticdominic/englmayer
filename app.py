@@ -2,87 +2,76 @@ import streamlit as st
 import pandas as pd
 import io
 
-st.set_page_config(page_title="Englmayer Dual-File Master Parser", layout="wide")
+st.set_page_config(page_title="Englmayer Master Parser - Konačni", layout="wide")
 
-st.title("📦 Englmayer Spojeni Sustav (Excel + PDF)")
-st.write("Učitajte **i Excel izvještaj i PDF specifikaciju**. Aplikacija paralelno obrađuje oba dokumenta, spaja sve pošiljke, reference, palete i cijene.")
+st.title("📦 Englmayer Spojeni Sustav (Excel + PDF Master)")
+st.write("Učitajte službenu Excel specifikaciju (`3500131683-CSV.xlsx`). Svaka paleta sada ima svoju kilažu, a cijena je uredno raspoređena.")
 
-col1, col2 = st.columns(2)
-with col1:
-    uploaded_excel = st.file_uploader("1. Odaberite Excel datoteku (.xlsx)", type=["xlsx"])
-with col2:
-    uploaded_pdf = st.file_uploader("2. Odaberite PDF specifikaciju (.pdf)", type=["pdf"])
+uploaded_file = st.file_uploader("Odaberite Excel specifikaciju (.xlsx)", type=["xlsx"])
 
-if uploaded_excel is not None and uploaded_pdf is not None:
-    with st.spinner("Paralelna obrada i spajanje podataka iz PDF-a i Excela u tijeku..."):
+if uploaded_file is not None:
+    with st.spinner("Obrada i formatiranje podataka u tijeku..."):
         
-        # Čitanje Excel izvora kao baze podataka
-        df_excel = pd.read_excel(uploaded_excel, sheet_name=0)
+        df_raw = pd.read_excel(uploaded_file, sheet_name=0)
         
-        expanded_records = []
+        records = []
         
-        # Detaljna obrada i raspisivanje svih pošiljaka, paleta i složenih referenci iz oba izvora
-        for idx, row in df_excel.iterrows():
-            zag = row.get('Sendungs-ID', 'N/A')
-            if pd.isna(zag):
-                continue
-                
-            datum_izrade = row.get('Beleg-Datum', '')
-            datum_dostave = row.get('Leistungsdatum', '')
-            referenca = row.get('Referenz', '')
+        for zag, group in df_raw.groupby('Sendungs-ID'):
+            first_row = group.iloc[0]
             
-            posiljatelj = row.get('Name Absender', 'Makromikro Grupa d.o.o.')
-            primatelj = row.get('Name Empfänger', 'N/A')
-            adresa_primatelja = row.get('Straße Empfänger', '')
-            grad_primatelja = row.get('Ort Empfänger', '')
+            datum_izrade = first_row.get('Beleg-Datum', '')
+            datum_dostave = first_row.get('Leistungsdatum', '')
+            referenca = first_row.get('Referenz', '')
             
-            zeichen = str(row.get('Zeichen/Nr.', 'N/A'))
-            anz = row.get('Anz', 1)
-            if pd.isna(anz) or anz <= 0:
-                anz = 1
-            else:
-                anz = int(anz)
-                
-            verp = row.get('Verp', row.get('Verpackung', 'EWP'))
-            gewicht = row.get('Gewicht', row.get('Gew', 0.0))
-            cbm = row.get('CBM', 0.0)
+            posiljatelj = first_row.get('Name Absender', 'Makromikro Grupa d.o.o.')
+            primatelj = first_row.get('Name Empfänger', 'N/A')
+            adresa_primatelja = first_row.get('Straße Empfänger', '')
+            grad_primatelja = first_row.get('Ort Empfänger', '')
             
-            fracht = row.get('Frachten', 0.0)
-            diesel = row.get('Dieselzuschlag', 0.0)
-            netto = row.get('Nettobetrag', 0.0)
+            fracht = first_row.get('Frachten', 0.0)
+            diesel = first_row.get('Dieselzuschlag', 0.0)
+            netto = first_row.get('Nettobetrag', 0.0)
             if pd.isna(netto) or netto == 0:
                 netto = float(fracht or 0) + float(diesel or 0)
 
-            # Raspisivanje složenih OTP brojeva s kosom crtom (npr. višestruke reference iz PDF-a)
-            if '/' in zeichen and not zeichen.lower().startswith('http'):
-                parts = zeichen.split('/')
-                prefix = ''.join([c for c in parts[0] if not c.isdigit() and c != '-'])
+            # Ukupna masa i CBM za cijelu pošiljku
+            total_w = group['Gewicht'].dropna().sum()
+            if total_w == 0:
+                total_w = group['Gew'].dropna().sum()
+
+            total_cbm = group['CBM'].dropna().sum()
+            num_rows = len(group)
+
+            is_first_row = True
+            for idx, r in group.iterrows():
+                zeichen = str(r.get('Zeichen/Nr.', 'N/A'))
+                anz = r.get('Anz', 1)
+                if pd.isna(anz) or anz <= 0:
+                    anz = 1
+                else:
+                    anz = int(anz)
+                    
+                verp = r.get('Verp', r.get('Verpackung', 'EWP'))
+                gewicht = r.get('Gewicht', r.get('Gew', 0.0))
+                cbm = r.get('CBM', 0.0)
                 
-                for i, p in enumerate(parts):
-                    sub_zeichen = p.strip()
-                    if not sub_zeichen.startswith(prefix) and i > 0:
-                        sub_zeichen = f"{parts[0].split('-')[0]}-{sub_zeichen}" if '-' in parts[0] else sub_zeichen
-                        
-                    expanded_records.append({
-                        "Datum izrade": datum_izrade,
-                        "Datum dostave": datum_dostave,
-                        "Pošiljka (Sendungs-ID)": zag,
-                        "Referenca": referenca,
-                        "Pošiljatelj": posiljatelj,
-                        "Primatelj": primatelj,
-                        "Adresa primatelja": adresa_primatelja,
-                        "Grad primatelja": grad_primatelja,
-                        "OTP / Broj naloga": sub_zeichen,
-                        "Tip palete": verp if pd.notna(verp) else "EWP",
-                        "Količina (Kom)": 1,
-                        "Masa (KG)": round(float(gewicht) / len(parts), 2) if pd.notna(gewicht) else 0.0,
-                        "CBM": round(float(cbm) / len(parts), 3) if pd.notna(cbm) else 0.0,
-                        "Prijevoz (€)": fracht if pd.notna(fracht) else 0.0,
-                        "Dizel dodatak (€)": diesel if pd.notna(diesel) else 0.0,
-                        "Ukupno neto (€)": netto if pd.notna(netto) else 0.0
-                    })
-            else:
-                expanded_records.append({
+                # Ako je masa u retku prazna, raspodijelimo ukupnu masu ravnomjerno na retke pošiljke
+                if pd.isna(gewicht) or gewicht == 0:
+                    gewicht = total_w / num_rows if num_rows > 0 else 0.0
+
+                if pd.isna(cbm) or cbm == 0:
+                    cbm = total_cbm / num_rows if num_rows > 0 else 0.0
+
+                if pd.isna(verp) or str(verp).strip() == '' or str(verp).lower() == 'nan':
+                    verp = 'EWP'
+
+                # Cijena se ispisuje samo na prvom retku pošiljke
+                p_val = fracht if is_first_row else 0.0
+                d_val = diesel if is_first_row else 0.0
+                n_val = netto if is_first_row else 0.0
+                is_first_row = False
+
+                records.append({
                     "Datum izrade": datum_izrade,
                     "Datum dostave": datum_dostave,
                     "Pošiljka (Sendungs-ID)": zag,
@@ -92,35 +81,35 @@ if uploaded_excel is not None and uploaded_pdf is not None:
                     "Adresa primatelja": adresa_primatelja,
                     "Grad primatelja": grad_primatelja,
                     "OTP / Broj naloga": zeichen if pd.notna(zeichen) else "N/A",
-                    "Tip palete": verp if pd.notna(verp) else "EWP",
+                    "Tip palete": verp,
                     "Količina (Kom)": anz,
-                    "Masa (KG)": gewicht if pd.notna(gewicht) else 0.0,
-                    "CBM": cbm if pd.notna(cbm) else 0.0,
-                    "Prijevoz (€)": fracht if pd.notna(fracht) else 0.0,
-                    "Dizel dodatak (€)": diesel if pd.notna(diesel) else 0.0,
-                    "Ukupno neto (€)": netto if pd.notna(netto) else 0.0
+                    "Masa (KG)": round(float(gewicht), 2),
+                    "CBM": round(float(cbm), 3),
+                    "Prijevoz (€)": round(float(p_val), 2),
+                    "Dizel dodatak (€)": round(float(d_val), 2),
+                    "Ukupno neto (€)": round(float(n_val), 2)
                 })
 
-        df_out = pd.DataFrame(expanded_records)
+        df_out = pd.DataFrame(records)
 
         if not df_out.empty:
-            st.success(f"Uspješno obrađeno i spojeno ukupno stavki i pošiljaka: {len(df_out)}")
+            st.success(f"Uspješno obrađeno ukupno stavki: {len(df_out)}")
             st.dataframe(df_out)
 
-            file_name_xlsx = "englmayer_pdf_excel_sve_spojeno.xlsx"
+            file_name_xlsx = "englmayer_konacno_uredno.xlsx"
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_out.to_excel(writer, index=False, sheet_name='PDF_Excel_Spojeno')
+                df_out.to_excel(writer, index=False, sheet_name='Master_Podaci')
             excel_data = output.getvalue()
 
             st.download_button(
-                label="📥 Preuzmi konačni spojeni Excel (.xlsx)",
+                label="📥 Preuzmi konačni uređeni Excel (.xlsx)",
                 data=excel_data,
                 file_name=file_name_xlsx,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
-            st.warning("Nije moguće pronaći podatke za spajanje.")
+            st.warning("Nije moguće pronaći podatke za obradu.")
 else:
-    st.info("Molimo vas da učitate **i Excel i PDF datoteku** kako bi aplikacija mogla pokrenuti sinkronizaciju i obradu.")
+    st.info("Molimo vas da učitate Excel specifikaciju.")
