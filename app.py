@@ -93,7 +93,7 @@ def to_excel(df):
     return output.getvalue()
 
 
-# --- PARSIRANJE ENGLMAYER PDF SPECIFIKACIJE ---
+# --- PARSIRANJE ENGLMAYER PDF SPECIFIKACIJE (Ažurirano s Debug fallbackom) ---
 def parsiraj_englmayer_pdf(pdf_file):
     reader = PdfReader(pdf_file)
     tekst_sveukupno = ""
@@ -102,15 +102,22 @@ def parsiraj_englmayer_pdf(pdf_file):
         if t:
             tekst_sveukupno += t + "\n"
 
-    posiljke = []  # Stabilan naziv bez dijakritika
+    posiljke = []  
     
-    blenderi = re.split(r"(LA-ID:\s*EP-\d+)", tekst_sveukupno)
+    # Fleksibilnije traženje blokova
+    blenderi = re.split(r"(LA-ID:\s*EP-\d+|Broj:\s*\d+|EP-\d+)", tekst_sveukupno, flags=re.IGNORECASE)
     
+    if len(blenderi) <= 1:
+        st.warning("⚠️ PDF nema standardne 'LA-ID' oznake. Provjeri strukturu sirovog teksta ispod.")
+        with st.expander("🔍 Debug: Sirovi tekst iz PDF-a (prvih 3000 znakova)", expanded=True):
+            st.text(tekst_sveukupno[:3000])
+        return pd.DataFrame()
+
     for i in range(1, len(blenderi), 2):
-        la_id = blenderi[i].replace("LA-ID:", "").strip()
+        la_id = blenderi[i].strip()
         sadrzaj_bloka = blenderi[i+1] if (i+1) < len(blenderi) else ""
         
-        match_grad = re.search(r"DPU\s*-\s*Isporučeno na mjesto istovareno\s+([^\n]+)", sadrzaj_bloka, re.IGNORECASE)
+        match_grad = re.search(r"(?:DPU|Mjesto istovara|Primatelj|Grad)\s*[-:]?\s*([^\n]+)", sadrzaj_bloka, re.IGNORECASE)
         grad = match_grad.group(1).strip() if match_grad else "Nepoznato"
         
         match_masa = re.findall(r"(\d+[\.,]\d{2})\s*(?:kg|KG)", sadrzaj_bloka)
@@ -123,14 +130,14 @@ def parsiraj_englmayer_pdf(pdf_file):
         
         linije_bloka = sadrzaj_bloka.split("\n")
         for idx_l, linija in enumerate(linije_bloka):
-            if "Roba od" in linija or "110" in linija:
+            if any(kljuc in linija.lower() for kljuc in ["roba", "transport", "osnov", "cijena", "110"]):
                 for naknadna in linije_bloka[idx_l:idx_l+3]:
                     m_izn = re.search(r"(\d+[\.,]\d{2})", naknadna)
                     if m_izn and cijena_transporta == 0.0:
                         val_pot = float(m_izn.group(1).replace(".", "").replace(",", "."))
                         if val_pot < 1000:
                             cijena_transporta = val_pot
-            if "Dizel" in linija or "dodatak" in linija or "197" in linija or "199" in linija:
+            if any(kljuc in linija.lower() for kljuc in ["dizel", "goriv", "dodatak", "197", "199"]):
                 for naknadna in linije_bloka[idx_l:idx_l+3]:
                     m_izn = re.search(r"(\d+[\.,]\d{2})", naknadna)
                     if m_izn and cijena_goriva_stavka == 0.0:
@@ -146,14 +153,10 @@ def parsiraj_englmayer_pdf(pdf_file):
             "Naplaćeni Dizel Dodatak (€)": cijena_goriva_stavka
         })
 
-    if not posiljke:
-        st.warning("⚠️ PDF struktura je specifična. Prikazujem generički pregled učitanog dokumenta.")
-        return pd.DataFrame()
-
     return pd.DataFrame(posiljke)
 
 
-# Sidebar parametri
+# --- SIDEBAR PARAMETRI ---
 st.sidebar.header("Parametri obračuna Englmayer")
 prosjecna_cijena_goriva = st.sidebar.number_input(
     "Prosječna cijena dizel goriva (€ bez PDV-a):",
