@@ -93,7 +93,7 @@ def to_excel(df):
     return output.getvalue()
 
 
-# --- PARSIRANJE ENGLMAYER PDF SPECIFIKACIJE (Ažurirano s Debug fallbackom) ---
+# --- PARSIRANJE ENGLMAYER PDF SPECIFIKACIJE SA SCANNED PDF FALLBACKOM ---
 def parsiraj_englmayer_pdf(pdf_file):
     reader = PdfReader(pdf_file)
     tekst_sveukupno = ""
@@ -102,9 +102,23 @@ def parsiraj_englmayer_pdf(pdf_file):
         if t:
             tekst_sveukupno += t + "\n"
 
+    # Ako je PDF skeniran (prazan tekst)
+    if not tekst_sveukupno.strip():
+        st.warning("⚠️ Učitani PDF je skenirani dokument (slika) pa `pypdf` ne može izravno pročitati tekst.")
+        st.info("💡 **Demo način:** Prikazujem probni set podataka pošiljaka kako bi mogao testirati sve tablice, izračune preplata i Excel izvoz!")
+        
+        demo_data = [
+            {"LA-ID": "EP-2026-101", "Destinacija": "Split", "Masa (kg)": 450.0, "Naplaćeni Transport (€)": 50.00, "Naplaćeni Dizel Dodatak (€)": 5.00},
+            {"LA-ID": "EP-2026-102", "Destinacija": "Zadar", "Masa (kg)": 280.0, "Naplaćeni Transport (€)": 29.00, "Naplaćeni Dizel Dodatak (€)": 3.00},
+            {"LA-ID": "EP-2026-103", "Destinacija": "Rijeka", "Masa (kg)": 620.0, "Naplaćeni Transport (€)": 55.00, "Naplaćeni Dizel Dodatak (€)": 6.50},
+            {"LA-ID": "EP-2026-104", "Destinacija": "Zagreb", "Masa (kg)": 150.0, "Naplaćeni Transport (€)": 23.00, "Naplaćeni Dizel Dodatak (€)": 2.50},
+            {"LA-ID": "EP-2026-105", "Destinacija": "Osijek", "Masa (kg)": 510.0, "Naplaćeni Transport (€)": 51.00, "Naplaćeni Dizel Dodatak (€)": 6.00},
+            {"LA-ID": "EP-2026-106", "Destinacija": "Makarska", "Masa (kg)": 380.0, "Naplaćeni Transport (€)": 65.00, "Naplaćeni Dizel Dodatak (€)": 7.50},
+            {"LA-ID": "EP-2026-107", "Destinacija": "Krk", "Masa (kg)": 290.0, "Naplaćeni Transport (€)": 95.00, "Naplaćeni Dizel Dodatak (€)": 10.00},
+        ]
+        return pd.DataFrame(demo_data)
+
     posiljke = []  
-    
-    # Fleksibilnije traženje blokova
     blenderi = re.split(r"(LA-ID:\s*EP-\d+|Broj:\s*\d+|EP-\d+)", tekst_sveukupno, flags=re.IGNORECASE)
     
     if len(blenderi) <= 1:
