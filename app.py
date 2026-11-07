@@ -58,7 +58,7 @@ if uploaded_file is not None and api_key:
             
             with st.spinner("AI analizira stavke, palete, mase i volumene... Molimo pričekajte."):
                 response = client.models.generate_content(
-                    model='gemini-2.5-flash',
+                    model='gemini-3.8-flash',
                     contents=[uploaded_pdf, prompt],
                     config=types.GenerateContentConfig(
                         temperature=0.0,
