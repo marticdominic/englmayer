@@ -6,34 +6,21 @@ import pandas as pd
 import streamlit as st
 from pypdf import PdfReader
 
-# ReportLab importi za PDF izvještaje
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+# Pokušaj uvoz OCR biblioteka za skenirane PDF-ove
+try:
+    from pdf2image import convert_from_bytes
+    import pytesseract
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
 
 st.set_page_config(
     page_title="Kontrola Englmayer Logističkih Računa", page_icon="🚛", layout="wide"
 )
 
-# Sigurna registracija fontova
-FONT_REGULAR = "Helvetica"
-FONT_BOLD = "Helvetica-Bold"
-
-try:
-    if os.path.exists("DejaVuSans.ttf") and os.path.exists("DejaVuSans-Bold.ttf"):
-        pdfmetrics.registerFont(TTFont("DejaVuSans", "DejaVuSans.ttf"))
-        pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", "DejaVuSans-Bold.ttf"))
-        FONT_REGULAR = "DejaVuSans"
-        FONT_BOLD = "DejaVuSans-Bold"
-except Exception:
-    pass
-
 st.title("🚛 Sustav za Kontrolu i Analizu Englmayer Računa")
 st.write(
-    "Automatska ekstrakcija i kontrola troškova iz Englmayer PDF obračuna prema ugovornoj ponudi."
+    "Automatska ekstrakcija i kontrola troškova iz Englmayer PDF obračuna (podržava tekstualne i skenirane PDF-ove)."
 )
 
 # --- UGOVORNI CJENIK ENGLMAYER (Zona, Težina -> Cijena u EUR) ---
@@ -93,41 +80,47 @@ def to_excel(df):
     return output.getvalue()
 
 
-# --- PARSIRANJE ENGLMAYER PDF SPECIFIKACIJE ---
+# --- PAMETNO PARSIRANJE (Tekst + OCR za skenirane PDF-ove) ---
 def parsiraj_englmayer_pdf(pdf_file):
-    reader = PdfReader(pdf_file)
+    pdf_bytes = pdf_file.read()
+    reader = PdfReader(io.BytesIO(pdf_bytes))
     tekst_sveukupno = ""
+    
     for page in reader.pages:
         t = page.extract_text()
         if t:
             tekst_sveukupno += t + "\n"
 
-    # Ako je PDF skeniran (prazan tekst), vraćamo demo podatke
+    # Ako je tekst prazan (skenirani PDF), pokušavamo OCR ako je dostupan
     if not tekst_sveukupno.strip():
-        st.warning("⚠️ Učitani PDF je skenirani dokument (slika) pa `pypdf` ne može izravno pročitati tekst.")
-        st.info("💡 **Demo način:** Prikazujem probni set podataka pošiljaka za testiranje tablica i izračuna!")
-        
-        demo_data = [
-            {"LA-ID": "EP-2026-101", "Destinacija": "Split", "Masa (kg)": 450.0, "Naplaćeni Transport (€)": 50.00, "Naplaćeni Dizel Dodatak (€)": 5.00},
-            {"LA-ID": "EP-2026-102", "Destinacija": "Zadar", "Masa (kg)": 280.0, "Naplaćeni Transport (€)": 29.00, "Naplaćeni Dizel Dodatak (€)": 3.00},
-            {"LA-ID": "EP-2026-103", "Destinacija": "Rijeka", "Masa (kg)": 620.0, "Naplaćeni Transport (€)": 55.00, "Naplaćeni Dizel Dodatak (€)": 6.50},
-            {"LA-ID": "EP-2026-104", "Destinacija": "Zagreb", "Masa (kg)": 150.0, "Naplaćeni Transport (€)": 23.00, "Naplaćeni Dizel Dodatak (€)": 2.50},
-            {"LA-ID": "EP-2026-105", "Destinacija": "Osijek", "Masa (kg)": 510.0, "Naplaćeni Transport (€)": 51.00, "Naplaćeni Dizel Dodatak (€)": 6.00},
-            {"LA-ID": "EP-2026-106", "Destinacija": "Makarska", "Masa (kg)": 380.0, "Naplaćeni Transport (€)": 65.00, "Naplaćeni Dizel Dodatak (€)": 7.50},
-            {"LA-ID": "EP-2026-107", "Destinacija": "Krk", "Masa (kg)": 290.0, "Naplaćeni Transport (€)": 95.00, "Naplaćeni Dizel Dodatak (€)": 10.00},
-        ]
-        return pd.DataFrame(demo_data)
+        if OCR_AVAILABLE:
+            st.info("🔄 Dokument je skenirana slika. Pokrećem OCR prepoznavanje teksta...")
+            try:
+                images = convert_from_bytes(pdf_bytes)
+                for img in images:
+                    # 'hrv' za hrvatski jezik, ili 'eng' ako prepoznaje brojeve i nazive
+                    tekst_sveukupno += pytesseract.image_to_string(img, lang="hrv") + "\n"
+            except Exception as e:
+                st.warning(f"⚠️ OCR nije uspio obraditi slike: {e}")
+        else:
+            st.warning("⚠️ PDF je skeniran, a OCR paketi nisu instalirani. Prikazujem demo set podataka za testiranje.")
+            return pd.DataFrame([
+                {"LA-ID": "EP-2026-101", "Destinacija": "Split", "Masa (kg)": 450.0, "Naplaćeni Transport (€)": 50.00, "Naplaćeni Dizel Dodatak (€)": 5.00},
+                {"LA-ID": "EP-2026-102", "Destinacija": "Zadar", "Masa (kg)": 280.0, "Naplaćeni Transport (€)": 29.00, "Naplaćeni Dizel Dodatak (€)": 3.00},
+                {"LA-ID": "EP-2026-103", "Destinacija": "Rijeka", "Masa (kg)": 620.0, "Naplaćeni Transport (€)": 55.00, "Naplaćeni Dizel Dodatak (€)": 6.50},
+                {"LA-ID": "EP-2026-104", "Destinacija": "Zagreb", "Masa (kg)": 150.0, "Naplaćeni Transport (€)": 23.00, "Naplaćeni Dizel Dodatak (€)": 2.50},
+                {"LA-ID": "EP-2026-105", "Destinacija": "Osijek", "Masa (kg)": 510.0, "Naplaćeni Transport (€)": 51.00, "Naplaćeni Dizel Dodatak (€)": 6.00},
+            ])
 
     posiljke = []  
     blenderi = re.split(r"(LA-ID:\s*EP-\d+|Broj:\s*\d+|EP-\d+)", tekst_sveukupno, flags=re.IGNORECASE)
     
     if len(blenderi) <= 1:
-        st.warning("⚠️ PDF nema standardne 'LA-ID' oznake. Prikazujem demo podatke za testiranje.")
-        demo_data = [
+        st.warning("⚠️ U PDF-u nisu pronađene standardne oznake pošiljaka. Prikazujem demo set podataka radi provjere sučelja.")
+        return pd.DataFrame([
             {"LA-ID": "EP-2026-201", "Destinacija": "Split", "Masa (kg)": 400.0, "Naplaćeni Transport (€)": 45.00, "Naplaćeni Dizel Dodatak (€)": 4.50},
             {"LA-ID": "EP-2026-202", "Destinacija": "Zadar", "Masa (kg)": 300.0, "Naplaćeni Transport (€)": 30.00, "Naplaćeni Dizel Dodatak (€)": 3.00},
-        ]
-        return pd.DataFrame(demo_data)
+        ])
 
     for i in range(1, len(blenderi), 2):
         la_id = blenderi[i].strip()
@@ -187,7 +180,7 @@ st.sidebar.info(f"Izračunati dodatak za dizel gorivo: **{posto_dizela:.1f}%**")
 uploaded_pdf = st.file_uploader("Učitaj Englmayer PDF Obračun / Specifikaciju", type=["pdf"])
 
 if uploaded_pdf is not None:
-    with st.spinner("Parsiram Englmayer PDF specifikaciju..."):
+    with st.spinner("Obrada i čitanje PDF dokumenta..."):
         res_df = parsiraj_englmayer_pdf(uploaded_pdf)
 
     if res_df is not None and not res_df.empty:
