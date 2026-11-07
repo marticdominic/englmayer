@@ -6,13 +6,13 @@ import pandas as pd
 import streamlit as st
 from pypdf import PdfReader
 
-# Pokušaj uvoz OCR biblioteka za skenirane PDF-ove
+# Pokušaj uvoza OCR alata
 try:
     from pdf2image import convert_from_bytes
     import pytesseract
-    OCR_AVAILABLE = True
+    OCR_DOSTUPAN = True
 except ImportError:
-    OCR_AVAILABLE = False
+    OCR_DOSTUPAN = False
 
 st.set_page_config(
     page_title="Kontrola Englmayer Logističkih Računa", page_icon="🚛", layout="wide"
@@ -20,10 +20,10 @@ st.set_page_config(
 
 st.title("🚛 Sustav za Kontrolu i Analizu Englmayer Računa")
 st.write(
-    "Automatska ekstrakcija i kontrola troškova iz Englmayer PDF obračuna (podržava tekstualne i skenirane PDF-ove)."
+    "Automatska ekstrakcija i kontrola troškova (Podržava tekstualne PDF-ove, skenirane PDF slike i Excel/CSV tablice)."
 )
 
-# --- UGOVORNI CJENIK ENGLMAYER (Zona, Težina -> Cijena u EUR) ---
+# --- UGOVORNI CJENIK ENGLMAYER ---
 CJENIK_ENGLMAYER = {
     "Zona 1": {300: 23.00, 400: 25.00, 500: 30.00, 600: 33.00, 700: 38.00},
     "Zona 2": {300: 26.00, 400: 29.00, 500: 35.00, 600: 39.00, 700: 43.00},
@@ -79,93 +79,99 @@ def to_excel(df):
         df.to_excel(writer, index=False, sheet_name="Izvjestaj")
     return output.getvalue()
 
-
-# --- PAMETNO PARSIRANJE (Tekst + OCR za skenirane PDF-ove) ---
-def parsiraj_englmayer_pdf(pdf_file):
-    pdf_bytes = pdf_file.read()
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    tekst_sveukupno = ""
+def ucitaj_i_parsiraj_datoteku(uploaded_file):
+    naziv = uploaded_file.name.lower()
     
-    for page in reader.pages:
-        t = page.extract_text()
-        if t:
-            tekst_sveukupno += t + "\n"
+    # 1. Ako je uitan Excel ili CSV
+    if naziv.endswith(('.xlsx', '.xls', '.csv')):
+        try:
+            df = pd.read_csv(uploaded_file) if naziv.endswith('.csv') else pd.read_excel(uploaded_file)
+            st.success("✅ Uspješno učitana tablica!")
+            return df
+        except Exception as e:
+            st.error(f"Greška kod čitanja tablice: {e}")
+            return pd.DataFrame()
 
-    # Ako je tekst prazan (skenirani PDF), pokušavamo OCR ako je dostupan
-    if not tekst_sveukupno.strip():
-        if OCR_AVAILABLE:
-            st.info("🔄 Dokument je skenirana slika. Pokrećem OCR prepoznavanje teksta...")
-            try:
-                images = convert_from_bytes(pdf_bytes)
-                for img in images:
-                    # 'hrv' za hrvatski jezik, ili 'eng' ako prepoznaje brojeve i nazive
-                    tekst_sveukupno += pytesseract.image_to_string(img, lang="hrv") + "\n"
-            except Exception as e:
-                st.warning(f"⚠️ OCR nije uspio obraditi slike: {e}")
-        else:
-            st.warning("⚠️ PDF je skeniran, a OCR paketi nisu instalirani. Prikazujem demo set podataka za testiranje.")
-            return pd.DataFrame([
-                {"LA-ID": "EP-2026-101", "Destinacija": "Split", "Masa (kg)": 450.0, "Naplaćeni Transport (€)": 50.00, "Naplaćeni Dizel Dodatak (€)": 5.00},
-                {"LA-ID": "EP-2026-102", "Destinacija": "Zadar", "Masa (kg)": 280.0, "Naplaćeni Transport (€)": 29.00, "Naplaćeni Dizel Dodatak (€)": 3.00},
-                {"LA-ID": "EP-2026-103", "Destinacija": "Rijeka", "Masa (kg)": 620.0, "Naplaćeni Transport (€)": 55.00, "Naplaćeni Dizel Dodatak (€)": 6.50},
-                {"LA-ID": "EP-2026-104", "Destinacija": "Zagreb", "Masa (kg)": 150.0, "Naplaćeni Transport (€)": 23.00, "Naplaćeni Dizel Dodatak (€)": 2.50},
-                {"LA-ID": "EP-2026-105", "Destinacija": "Osijek", "Masa (kg)": 510.0, "Naplaćeni Transport (€)": 51.00, "Naplaćeni Dizel Dodatak (€)": 6.00},
-            ])
-
-    posiljke = []  
-    blenderi = re.split(r"(LA-ID:\s*EP-\d+|Broj:\s*\d+|EP-\d+)", tekst_sveukupno, flags=re.IGNORECASE)
-    
-    if len(blenderi) <= 1:
-        st.warning("⚠️ U PDF-u nisu pronađene standardne oznake pošiljaka. Prikazujem demo set podataka radi provjere sučelja.")
-        return pd.DataFrame([
-            {"LA-ID": "EP-2026-201", "Destinacija": "Split", "Masa (kg)": 400.0, "Naplaćeni Transport (€)": 45.00, "Naplaćeni Dizel Dodatak (€)": 4.50},
-            {"LA-ID": "EP-2026-202", "Destinacija": "Zadar", "Masa (kg)": 300.0, "Naplaćeni Transport (€)": 30.00, "Naplaćeni Dizel Dodatak (€)": 3.00},
-        ])
-
-    for i in range(1, len(blenderi), 2):
-        la_id = blenderi[i].strip()
-        sadrzaj_bloka = blenderi[i+1] if (i+1) < len(blenderi) else ""
+    # 2. Ako je učitan PDF
+    elif naziv.endswith('.pdf'):
+        pdf_bytes = uploaded_file.read()
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        tekst_sveukupno = ""
         
-        match_grad = re.search(r"(?:DPU|Mjesto istovara|Primatelj|Grad)\s*[-:]?\s*([^\n]+)", sadrzaj_bloka, re.IGNORECASE)
-        grad = match_grad.group(1).strip() if match_grad else "Nepoznato"
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                tekst_sveukupno += t + "\n"
+
+        # Ako nema teksta (skenirana slika), pokrećemo OCR
+        if not tekst_sveukupno.strip():
+            st.info("🔄 PDF je skenirana slika. Pokrećem OCR prepoznavanje...")
+            if OCR_DOSTUPAN:
+                try:
+                    images = convert_from_bytes(pdf_bytes)
+                    for img in images:
+                        tekst_sveukupno += pytesseract.image_to_string(img, lang="hrv+eng") + "\n"
+                except Exception as e:
+                    st.error(f"OCR Greška: {e}. Provjeri je li 'packages.txt' dodan na GitHub.")
+                    return pd.DataFrame()
+            else:
+                st.warning("⚠️ OCR biblioteke nisu dostupne na poslužitelju.")
+                return pd.DataFrame()
+
+        # Parsiranje dobivenog teksta
+        posiljke = []  
+        blenderi = re.split(r"(LA-ID:\s*EP-\d+|Broj:\s*\d+|EP-\d+)", tekst_sveukupno, flags=re.IGNORECASE)
         
-        match_masa = re.findall(r"(\d+[\.,]\d{2})\s*(?:kg|KG)", sadrzaj_bloka)
-        ukupna_masa = sum([float(m.replace(".", "").replace(",", ".")) for m in match_masa]) if match_masa else 200.0
-        if ukupna_masa == 0:
-            ukupna_masa = 200.0
+        if len(blenderi) <= 1:
+            st.warning("⚠️ U PDF-u nisu prepoznati standardni blokovi pošiljaka. Preporučujemo uvoz Excel specifikacije.")
+            return pd.DataFrame()
+
+        for i in range(1, len(blenderi), 2):
+            la_id = blenderi[i].strip()
+            sadrzaj_bloka = blenderi[i+1] if (i+1) < len(blenderi) else ""
             
-        cijena_transporta = 0.0
-        cijena_goriva_stavka = 0.0
-        
-        linije_bloka = sadrzaj_bloka.split("\n")
-        for idx_l, linija in enumerate(linije_bloka):
-            if any(kljuc in linija.lower() for kljuc in ["roba", "transport", "osnov", "cijena", "110"]):
-                for naknadna in linije_bloka[idx_l:idx_l+3]:
-                    m_izn = re.search(r"(\d+[\.,]\d{2})", naknadna)
-                    if m_izn and cijena_transporta == 0.0:
-                        val_pot = float(m_izn.group(1).replace(".", "").replace(",", "."))
-                        if val_pot < 1000:
-                            cijena_transporta = val_pot
-            if any(kljuc in linija.lower() for kljuc in ["dizel", "goriv", "dodatak", "197", "199"]):
-                for naknadna in linije_bloka[idx_l:idx_l+3]:
-                    m_izn = re.search(r"(\d+[\.,]\d{2})", naknadna)
-                    if m_izn and cijena_goriva_stavka == 0.0:
-                        val_pot = float(m_izn.group(1).replace(".", "").replace(",", "."))
-                        if val_pot < 200:
-                            cijena_goriva_stavka = val_pot
+            match_grad = re.search(r"(?:DPU|Mjesto istovara|Primatelj|Grad)\s*[-:]?\s*([^\n]+)", sadrzaj_bloka, re.IGNORECASE)
+            grad = match_grad.group(1).strip() if match_grad else "Nepoznato"
+            
+            match_masa = re.findall(r"(\d+[\.,]\d{2})\s*(?:kg|KG)", sadrzaj_bloka)
+            ukupna_masa = sum([float(m.replace(".", "").replace(",", ".")) for m in match_masa]) if match_masa else 200.0
+            if ukupna_masa == 0:
+                ukupna_masa = 200.0
+                
+            cijena_transporta = 0.0
+            cijena_goriva_stavka = 0.0
+            
+            linije_bloka = sadrzaj_bloka.split("\n")
+            for idx_l, linija in enumerate(linije_bloka):
+                if any(kljuc in linija.lower() for kljuc in ["roba", "transport", "osnov", "cijena", "110"]):
+                    for naknadna in linije_bloka[idx_l:idx_l+3]:
+                        m_izn = re.search(r"(\d+[\.,]\d{2})", naknadna)
+                        if m_izn and cijena_transporta == 0.0:
+                            val_pot = float(m_izn.group(1).replace(".", "").replace(",", "."))
+                            if val_pot < 1000:
+                                cijena_transporta = val_pot
+                if any(kljuc in linija.lower() for kljuc in ["dizel", "goriv", "dodatak", "197", "199"]):
+                    for naknadna in linije_bloka[idx_l:idx_l+3]:
+                        m_izn = re.search(r"(\d+[\.,]\d{2})", naknadna)
+                        if m_izn and cijena_goriva_stavka == 0.0:
+                            val_pot = float(m_izn.group(1).replace(".", "").replace(",", "."))
+                            if val_pot < 200:
+                                cijena_goriva_stavka = val_pot
 
-        posiljke.append({
-            "LA-ID": la_id,
-            "Destinacija": grad,
-            "Masa (kg)": ukupna_masa,
-            "Naplaćeni Transport (€)": cijena_transporta if cijena_transporta > 0 else 45.00,
-            "Naplaćeni Dizel Dodatak (€)": cijena_goriva_stavka
-        })
+            posiljke.append({
+                "LA-ID": la_id,
+                "Destinacija": grad,
+                "Masa (kg)": ukupna_masa,
+                "Naplaćeni Transport (€)": cijena_transporta if cijena_transporta > 0 else 45.00,
+                "Naplaćeni Dizel Dodatak (€)": cijena_goriva_stavka
+            })
 
-    return pd.DataFrame(posiljke)
+        return pd.DataFrame(posiljke)
+    
+    return pd.DataFrame()
 
 
-# --- SIDEBAR PARAMETRI ---
+# --- SIDEBAR ---
 st.sidebar.header("Parametri obračuna Englmayer")
 prosjecna_cijena_goriva = st.sidebar.number_input(
     "Prosječna cijena dizel goriva (€ bez PDV-a):",
@@ -177,14 +183,29 @@ prosjecna_cijena_goriva = st.sidebar.number_input(
 posto_dizela = izracunaj_dizel_dodatak_englmayer(prosjecna_cijena_goriva)
 st.sidebar.info(f"Izračunati dodatak za dizel gorivo: **{posto_dizela:.1f}%**")
 
-uploaded_pdf = st.file_uploader("Učitaj Englmayer PDF Obračun / Specifikaciju", type=["pdf"])
+uploaded_file = st.file_uploader("Učitaj Englmayer PDF (tekst/slika) ili Excel/CSV tablicu", type=["pdf", "xlsx", "xls", "csv"])
 
-if uploaded_pdf is not None:
-    with st.spinner("Obrada i čitanje PDF dokumenta..."):
-        res_df = parsiraj_englmayer_pdf(uploaded_pdf)
+if uploaded_file is not None:
+    with st.spinner("Obrada i analitičko parsiranje..."):
+        res_df = ucitaj_i_parsiraj_datoteku(uploaded_file)
 
     if res_df is not None and not res_df.empty:
-        st.success(f"Uspješno učitano i obrađeno pošiljaka: **{len(res_df)}**")
+        # Automatsko mapiranje stupaca ako je učitan Excel
+        for col in res_df.columns:
+            c_low = col.lower()
+            if "id" in c_low or "broj" in c_low: res_df.rename(columns={col: "LA-ID"}, inplace=True)
+            elif "destinacija" in c_low or "grad" in c_low or "mjesto" in c_low: res_df.rename(columns={col: "Destinacija"}, inplace=True)
+            elif "masa" in c_low or "kg" in c_low: res_df.rename(columns={col: "Masa (kg)"}, inplace=True)
+            elif "transport" in c_low or "osnova" in c_low: res_df.rename(columns={col: "Naplaćeni Transport (€)"}, inplace=True)
+            elif "dizel" in c_low or "goriv" in c_low: res_df.rename(columns={col: "Naplaćeni Dizel Dodatak (€)"}, inplace=True)
+
+        if "LA-ID" not in res_df.columns: res_df["LA-ID"] = [f"EP-{i+1}" for i in range(len(res_df))]
+        if "Destinacija" not in res_df.columns: res_df["Destinacija"] = "Zagreb"
+        if "Masa (kg)" not in res_df.columns: res_df["Masa (kg)"] = 200.0
+        if "Naplaćeni Transport (€)" not in res_df.columns: res_df["Naplaćeni Transport (€)"] = 45.0
+        if "Naplaćeni Dizel Dodatak (€)" not in res_df.columns: res_df["Naplaćeni Dizel Dodatak (€)"] = 0.0
+
+        st.success(f"Uspješno obrađeno pošiljaka: **{len(res_df)}**")
 
         ugovorene_osnove = []
         ugovoreni_dizeli = []
@@ -193,17 +214,14 @@ if uploaded_pdf is not None:
         for _, row in res_df.iterrows():
             zona = odredi_zonu_englmayer(row["Destinacija"])
             zone_lista.append(zona)
-            
-            osnova = izracunaj_osnovnu_cijenu_palete(row["Masa (kg)"], zona)
+            osnova = izracunaj_osnovnu_cijenu_palete(float(row["Masa (kg)"]), zona)
             ugovorene_osnove.append(osnova)
-            
             dizel_ugovor = osnova * (posto_dizela / 100.0)
             ugovoreni_dizeli.append(round(dizel_ugovor, 2))
 
         res_df["Zona"] = zone_lista
         res_df["Ugovorena Osnova (€)"] = ugovorene_osnove
         res_df["Ugovoreni Dizel (€)"] = ugovoreni_dizeli
-        
         res_df["Razlika Transport (€)"] = res_df["Naplaćeni Transport (€)"] - res_df["Ugovorena Osnova (€)"]
         res_df["Razlika Dizel (€)"] = res_df["Naplaćeni Dizel Dodatak (€)"] - res_df["Ugovoreni Dizel (€)"]
         res_df["Ukupna Razlika (€)"] = res_df["Razlika Transport (€)"] + res_df["Razlika Dizel (€)"]
@@ -216,7 +234,7 @@ if uploaded_pdf is not None:
         ])
 
         with tab1:
-            st.subheader("Pregled stavki iz Englmayer PDF-a uspoređen s ugovornim cjenikom")
+            st.subheader("Pregled stavki uspoređen s ugovornim cjenikom")
             st.dataframe(res_df, use_container_width=True)
             st.download_button(
                 "📥 Preuzmi Analizu u Excel",
@@ -240,7 +258,7 @@ if uploaded_pdf is not None:
                 )
 
         with tab3:
-            st.subheader("📈 Zbirni financijski sažetak Englmayer fakture")
+            st.subheader("📈 Zbirni financijski sažetak fakture")
             uk_naplaceno_t = res_df["Naplaćeni Transport (€)"].sum()
             uk_ugovoreno_t = res_df["Ugovorena Osnova (€)"].sum()
             uk_naplaceno_d = res_df["Naplaćeni Dizel Dodatak (€)"].sum()
