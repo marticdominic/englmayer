@@ -38,7 +38,7 @@ if uploaded_file is not None and api_key:
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            failed_chunks = [] # Ovdje ćemo pamtiti ako neki dio zapne
+            failed_chunks = [] 
             
             def process_chunk(chunk_idx, start_page, end_page):
                 """Pomoćna funkcija za obradu jednog bloka stranica"""
@@ -104,21 +104,20 @@ if uploaded_file is not None and api_key:
                     result = process_chunk(idx, start_page, end_page)
                     all_data.extend(result)
                 except Exception as e:
-                    # Ako pukne, spremamo taj blok u listu neuspjelih da ga obradimo kasnije
                     failed_chunks.append((idx, start_page, end_page))
                 
                 time.sleep(1)
                 progress_bar.progress((idx + 1) / len(chunks))
             
-            # 2. AUTOMATSKI POPRAVNI PROLAZ ZA NEUSPJELA DIJELA (AKO IH IMA)
+            # 2. AUTOMATSKI POPRAVNI PROLAZ ZA NEUSPJELA DIJELA
             if failed_chunks:
                 st.warning(f"Neki dijelovi ({len(failed_chunks)} bloka) su naišli na opterećenje. Pokrećem automatski oporavak i ponovni pokušaj...")
                 for idx, start_page, end_page in failed_chunks:
                     status_text.text(f"Oporavak: Ponovno obrađujem stranice {start_page + 1} do {end_page}...")
                     success_recovery = False
-                    for attempt in range(3): # Pokušaj 3 puta s pauzama
+                    for attempt in range(3):
                         try:
-                            time.sleep(4 * (attempt + 1)) # Dulja pauza (4s, 8s, 12s)
+                            time.sleep(4 * (attempt + 1))
                             result = process_chunk(idx, start_page, end_page)
                             all_data.extend(result)
                             success_recovery = True
@@ -126,7 +125,7 @@ if uploaded_file is not None and api_key:
                         except Exception:
                             pass
                     if not success_recovery:
-                        st.error(Kritična greška: Stranice {start_page+1}-{end_page} nisu se uspjele učitati ni nakon više pokušaja.)
+                        st.error(f"Kritična greška: Stranice {start_page+1}-{end_page} nisu se uspjele učitati ni nakon više pokušaja.")
             
             status_text.text("Obrada i oporavak završeni! Pripremam Excel tablicu...")
             
