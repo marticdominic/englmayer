@@ -39,10 +39,10 @@ except Exception as e:
 
 st.title("📦 Sustav za Kontrolu Englmayer Računa (Word & Excel Specifikacije)")
 st.write(
-    "Automatska kontrola troškova po paletama i dizel dodatka prema ponudi G. Englmayer (OF 002/2026)."
+    "Automatska kontrola troškova, van gabaritnih paleta (+50%) i dizel dodatka prema ponudi G. Englmayer (OF 002/2026)."
 )
 
-# Englmayer cjenik paleta po zonama (EUR bez PDV-a) prema ponudi
+# Englmayer cjenik paleta po zonama (EUR bez PDV-a) iz ponude[cite: 6]
 englmayer_cjenik = {
     "Zona 1": {300: 23.00, 400: 25.00, 500: 30.00, 600: 33.00, 700: 38.00},
     "Zona 2": {300: 26.00, 400: 29.00, 500: 35.00, 600: 39.00, 700: 43.00},
@@ -53,12 +53,12 @@ englmayer_cjenik = {
 }
 
 englmayer_otoci = {
-    "južni otoci": {300: 89.00, 400: 100.00, 500: 110.00, 600: 121.00},
-    "sjeverni otoci": {300: 79.00, 400: 89.00, 500: 100.00, 600: 110.00}
+    "južni otoci": {300: 89.00, 400: 100.00, 500: 110.00, 600: 121.00}, # Brač, Hvar, Korčula, Pelješac[cite: 7]
+    "sjeverni otoci": {300: 79.00, 400: 89.00, 500: 100.00, 600: 110.00} # Cres, Lošinj, Krk, Rab, Pag[cite: 7]
 }
 
-juzni_otoci = ["brač", "hvar", "korčula", "pelješac", "supetar", "bol", "stari grad", "jelsa", "vela luka", "ugljan"]
-sjeverni_otoci = ["cres", "lošinj", "krk", "rab", "pag", "mali lošinj", "baška", "malinska", "punat", "novalja"]
+juzni_otoci_nazivi = ["brač", "hvar", "korčula", "pelješac", "supetar", "bol", "stari grad", "jelsa", "vela luka", "ugljan"]
+sjeverni_otoci_nazivi = ["cres", "lošinj", "krk", "rab", "pag", "mali lošinj", "baška", "malinska", "punat", "novalja"]
 
 def dohvati_cijenu_palete(zona, masa_palete):
     if "Otok - Južni" in zona:
@@ -77,27 +77,41 @@ def dohvati_cijenu_palete(zona, masa_palete):
             
     return tablica[granice[-1]]
 
-def odredi_zonu(primatelj):
+def odredi_zonu_englmayer(primatelj):
     p_lc = str(primatelj).lower()
     
-    is_otok_juzni = any(o in p_lc for o in juzni_otoci)
-    is_otok_sjeverni = any(o in p_lc for o in sjeverni_otoci)
-    
-    if is_otok_juzni:
+    if any(o in p_lc for o in juzni_otoci_nazivi):
         return "Otok - Južni"
-    elif is_otok_sjeverni:
+    if any(o in p_lc for o in sjeverni_otoci_nazivi):
         return "Otok - Sjeverni"
+        
+    if any(g in p_lc for g in ["makarska", "imotski", "ploče", "dubrovnik", "metković", "korčula"]):
+        return "Zona 6"[cite: 6]
+        
+    pbr_match = re.search(r'\b(?!19|20|21|22|23|24|25|26|27|28|29)(\d{5})\b', str(primatelj))
+    pbr_prefix = int(pbr_match.group(1)[:2]) if pbr_match else 0
+
+    if pbr_prefix == 10:
+        return "Zona 1"[cite: 6]
+    elif 40 <= pbr_prefix <= 49:
+        return "Zona 2"[cite: 6]
+    elif 34 <= pbr_prefix <= 35:
+        return "Zona 3"[cite: 6]
+    elif pbr_prefix == 51:
+        return "Zona 4"[cite: 6]
+    elif (31 <= pbr_prefix <= 33) or (pbr_prefix == 52):
+        return "Zona 5"[cite: 6]
+    elif pbr_prefix == 20:
+        return "Zona 6"[cite: 6]
+        
+    if any(g in p_lc for g in ["zagreb", "velika gorica", "samobor", "zaprešić"]):
+        return "Zona 1"
+    elif any(g in p_lc for g in ["rijeka", "pula", "opatija", "poreč", "rovinj", "kukuljanovo", "zadar", "split", "šibenik", "knin"]):
+        return "Zona 2"
+    elif any(g in p_lc for g in ["osijek", "vukovar", "vinkovci", "slavonski brod", "županja", "požega"]):
+        return "Zona 3"
     else:
-        if any(g in p_lc for g in ["zagreb", "velika gorica", "samobor", "zaprešić"]):
-            return "Zona 1"
-        elif any(g in p_lc for g in ["split", "zadar", "dubrovnik", "makarska", "ploče", "imotski", "šibenik", "knin"]):
-            return "Zona 6" if any(x in p_lc for x in ["makarska", "ploče", "imotski"]) else "Zona 2"
-        elif any(g in p_lc for g in ["rijeka", "pula", "opatija", "poreč", "rovinj", "kukuljanovo"]):
-            return "Zona 2"
-        elif any(g in p_lc for g in ["osijek", "vukovar", "vinkovci", "slavonski brod", "županja"]):
-            return "Zona 3"
-        else:
-            return "Zona 2"
+        return "Zona 2"
 
 # Formula za dizel: do 1,46 EUR = 0%, na svakih daljnjih 0,07 EUR = 1%[cite: 3]
 fn_dizel = lambda c: 0.0 if c <= 1.46 else max(0.0, math.ceil((c - 1.46) / 0.07))
@@ -118,12 +132,10 @@ def parsiraj_word_specifikaciju_englmayer(doc_file):
         datum_naloga = ""
         datum_isporuke = ""
         primatelj = ""
-        ukupna_masa = 0.0
         naplaceni_transport = 0.0
         naplaceni_dizel = 0.0
-        broj_paleta = 0
         
-        palete_mase = []
+        palete_podaci = [] # Sadržavat će parove: (masa_palete, je_van_gabarita)
         
         for linija in linije:
             if "Broj pošiljke:" in linija:
@@ -134,10 +146,6 @@ def parsiraj_word_specifikaciju_englmayer(doc_file):
                 datum_isporuke = linija.split("Datum isporuke:")[-1].strip()
             elif "Primatelj:" in linija:
                 primatelj = linija.split("Primatelj:")[-1].strip()
-            elif "Ukupna masa pošiljke:" in linija:
-                m_match = re.search(r"([\d\.]+)\s*kg", linija)
-                if m_match:
-                    ukupna_masa = float(m_match.group(1).replace(".", "").replace(",", "."))
             elif "Cijena prijevoza:" in linija:
                 c_match = re.search(r"([\d\.,]+)\s*EUR", linija)
                 if c_match:
@@ -146,36 +154,40 @@ def parsiraj_word_specifikaciju_englmayer(doc_file):
                 d_match = re.search(r"([\d\.,]+)\s*EUR", linija)
                 if d_match:
                     naplaceni_dizel = float(d_match.group(1).replace(".", "").replace(",", "."))
-            elif "Paleta " in linija and " od " in linija:
-                broj_paleta += 1
-                match_m = re.search(r"Masa:\s*([\d\.,]+)\s*kg", linija)
-                if match_m:
-                    p_masa = float(match_m.group(1).replace(".", "").replace(",", "."))
-                    palete_mase.append(p_masa)
+            
+            # Detekcija paleta i provjera jesu li van gabarita (oznaka EWP1 ili slično)
+            elif any(tip in linija.upper() for tip in ["EWP", "FP", "CLL", "EUP"]):
+                je_vangabaritna = "EWP1" in linija.upper() or "VANGABARIT" in linija.upper()
+                m_match = re.findall(r"([\d\.,]+)", linija)
+                if m_match:
+                    for val_str in reversed(m_match):
+                        clean_val = val_str.replace(".", "").replace(",", ".")
+                        try:
+                            val_f = float(clean_val)
+                            if 1.0 <= val_f <= 5000.0:
+                                palete_podaci.append((val_f, je_vangabaritna))
+                                break
+                        except:
+                            continue
 
-        # Uklanjanje praznih redova (ako nema broja pošiljke ili primatelja)
         if not broj_posiljke or not primatelj:
             continue
 
+        broj_paleta = len(palete_podaci)
         if broj_paleta == 0:
             broj_paleta = 1
+            palete_podaci = [(0.0, False)]
 
-        if palete_mase:
-            zbroj_masa_paleta = sum(palete_mase)
-            if zbroj_masa_paleta > 0:
-                ukupna_masa = zbroj_masa_paleta
+        ukupna_masa = sum([p[0] for p in palete_podaci])
+        zona = odredi_zonu_englmayer(primatelj)
 
-        # Određivanje zone
-        zona = odredi_zonu(primatelj)
-
-        # Izračun ugovorene osnove po cjeniku (zbrajanje cijena pojedinačnih paleta)
+        # Izračun ugovorene osnove uz uračunavanje doplate od 50% za van gabaritne palete[cite: 6]
         ugovorena_osnova = 0.0
-        if palete_mase:
-            for p_masa in palete_mase:
-                ugovorena_osnova += dohvati_cijenu_palete(zona, p_masa)
-        else:
-            prosjek_mase = ukupna_masa / broj_paleta if broj_paleta > 0 else ukupna_masa
-            ugovorena_osnova = dohvati_cijenu_palete(zona, prosjek_mase) * broj_paleta
+        for p_masa, je_vg in palete_podaci:
+            osnovna_c = dohvati_cijenu_palete(zona, p_masa)
+            if je_vg:
+                osnovna_c *= 1.50  # +50% doplate za van gabaritne palete[cite: 6]
+            ugovorena_osnova += osnovna_c
 
         parsed_data.append({
             "Broj pošiljke": broj_posiljke,
@@ -232,7 +244,7 @@ if uploaded_file is not None:
             zone_list = []
             ugovorene_liste = []
             for _, r in df.iterrows():
-                z = odredi_zonu(r.get("Primatelj", ""))
+                z = odredi_zonu_englmayer(r.get("Primatelj", ""))
                 zone_list.append(z)
                 masa = float(r.get("Masa (kg)", 0))
                 br_p = int(r.get("Broj paleta", 1))
@@ -262,7 +274,7 @@ if uploaded_file is not None:
                 sumnjive = df[df["Razlika Transport (€)"] > 0.05]
                 st.dataframe(sumnjive, use_container_width=True)
                 st.download_button(
-                    "📥 Preuzmi izvještaj preplata (Excel)",
+                    "📥 Preuzmi izvještaj preplate (Excel)",
                     to_excel(sumnjive),
                     "englmayer_preplate.xlsx",
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
