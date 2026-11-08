@@ -8,10 +8,10 @@ import pypdf
 from google import genai
 from google.genai import types
 
-st.set_page_config(page_title="AI Čitač PDF Računa - Stabilna verzija", layout="wide")
+st.set_page_config(page_title="AI Čitač PDF Računa - Automatski Retry", layout="wide")
 
-st.title("📦 AI Čitač Transportnih Računa (Stabilizirano)")
-st.write("Ova verzija grupira stranice u veće blokove i automatski pričekat će ako su serveri opterećeni.")
+st.title("📦 AI Čitač Transportnih Računa (S automatskim oporavkom)")
+st.write("Ova verzija automatski pamti ako dio stranica zapne zbog opterećenja servera i ponavlja obradu dok ne uspije.")
 
 api_key = st.text_input("Unesite svoj Google Gemini API ključ:", type="password")
 uploaded_file = st.file_uploader("Odaberite PDF račun", type=["pdf"])
@@ -24,10 +24,9 @@ if uploaded_file is not None and api_key:
     
     st.info(f"PDF je učitan. Dokument ima ukupno {total_pages} stranica.")
     
-    # Preporučujemo veći broj stranica odjednom da se smanji broj poziva serveru
     pages_per_chunk = st.slider("Koliko stranica obraditi u jednom koraku?", min_value=5, max_value=15, value=10, step=5)
     
-    if st.button("🚀 Pokreni stabilnu obradu"):
+    if st.button("🚀 Pokreni pametnu obradu s oporavkom"):
         try:
             client = genai.Client(api_key=api_key)
             all_data = []
@@ -39,9 +38,10 @@ if uploaded_file is not None and api_key:
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            for idx, (start_page, end_page) in enumerate(chunks):
-                status_text.text(f"Obrađujem stranice {start_page + 1} do {end_page} od ukupno {total_pages}...")
-                
+            failed_chunks = [] # Ovdje ćemo pamtiti ako neki dio zapne
+            
+            def process_chunk(chunk_idx, start_page, end_page):
+                """Pomoćna funkcija za obradu jednog bloka stranica"""
                 writer = pypdf.PdfWriter()
                 for p in range(start_page, end_page):
                     writer.add_page(pdf_reader.pages[p])
@@ -50,7 +50,7 @@ if uploaded_file is not None and api_key:
                 writer.write(chunk_pdf_bytes)
                 chunk_pdf_bytes.seek(0)
                 
-                temp_chunk_path = f"temp_chunk_{idx}.pdf"
+                temp_chunk_path = f"temp_chunk_{chunk_idx}.pdf"
                 with open(temp_chunk_path, "wb") as f:
                     f.write(chunk_pdf_bytes.read())
                 
@@ -82,38 +82,53 @@ if uploaded_file is not None and api_key:
                 Ako na ovim stranicama nema pošiljki, vrati praznu listu [].
                 """
                 
-                # Mehanizam ponovnog pokušaja (Retry) ako server vrati 503 grešku
-                max_retries = 3
-                success = False
-                for attempt in range(max_retries):
-                    try:
-                        response = client.models.generate_content(
-                            model='gemini-3.8-flash',
-                            contents=[uploaded_chunk, chunk_prompt],
-                            config=types.GenerateContentConfig(
-                                temperature=0.0,
-                                response_mime_type="application/json"
-                            )
-                        )
-                        page_data = json.loads(response.text)
-                        if isinstance(page_data, list):
-                            all_data.extend(page_data)
-                        success = True
-                        break
-                    except Exception as err:
-                        if attempt < max_retries - 1:
-                            time.sleep(3 * (attempt + 1)) # Čeka par sekundi pa proba opet
-                        else:
-                            st.warning(f"Preskačem stranice {start_page+1}-{end_page} zbog greške servera: {err}")
+                response = client.models.generate_content(
+                    model='gemini-3.8-flash',
+                    contents=[uploaded_chunk, chunk_prompt],
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        response_mime_type="application/json"
+                    )
+                )
                 
                 if os.path.exists(temp_chunk_path):
                     os.remove(temp_chunk_path)
+                    
+                page_data = json.loads(response.text)
+                return page_data if isinstance(page_data, list) else []
+
+            # 1. PRVI PROLAZ KROZ SVE BLOKOVE
+            for idx, (start_page, end_page) in enumerate(chunks):
+                status_text.text(f"Prvi prolaz: Obrađujem stranice {start_page + 1} do {end_page}...")
+                try:
+                    result = process_chunk(idx, start_page, end_page)
+                    all_data.extend(result)
+                except Exception as e:
+                    # Ako pukne, spremamo taj blok u listu neuspjelih da ga obradimo kasnije
+                    failed_chunks.append((idx, start_page, end_page))
                 
-                # Mala pauza između zahtjeva da ne opteretimo server
                 time.sleep(1)
                 progress_bar.progress((idx + 1) / len(chunks))
             
-            status_text.text("Obrada završena! Pripremam Excel tablicu...")
+            # 2. AUTOMATSKI POPRAVNI PROLAZ ZA NEUSPJELA DIJELA (AKO IH IMA)
+            if failed_chunks:
+                st.warning(f"Neki dijelovi ({len(failed_chunks)} bloka) su naišli na opterećenje. Pokrećem automatski oporavak i ponovni pokušaj...")
+                for idx, start_page, end_page in failed_chunks:
+                    status_text.text(f"Oporavak: Ponovno obrađujem stranice {start_page + 1} do {end_page}...")
+                    success_recovery = False
+                    for attempt in range(3): # Pokušaj 3 puta s pauzama
+                        try:
+                            time.sleep(4 * (attempt + 1)) # Dulja pauza (4s, 8s, 12s)
+                            result = process_chunk(idx, start_page, end_page)
+                            all_data.extend(result)
+                            success_recovery = True
+                            break
+                        except Exception:
+                            pass
+                    if not success_recovery:
+                        st.error(Kritična greška: Stranice {start_page+1}-{end_page} nisu se uspjele učitati ni nakon više pokušaja.)
+            
+            status_text.text("Obrada i oporavak završeni! Pripremam Excel tablicu...")
             
             flat_rows = []
             for item in all_data:
@@ -141,7 +156,7 @@ if uploaded_file is not None and api_key:
                         })
             
             df = pd.DataFrame(flat_rows)
-            st.success(f"Uspješno obrađeno! Pronađeno ukupno {len(all_data)} pošiljaka s {len(df)} redaka paleta.")
+            st.success(f"Uspješno završeno! Pronađeno ukupno {len(all_data)} pošiljaka s {len(df)} redaka paleta.")
             
             st.dataframe(df)
             
