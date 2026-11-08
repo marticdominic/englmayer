@@ -92,11 +92,11 @@ def odredi_zonu_i_pbr(primatelj):
     if any(o in p_lc for o in sjeverni_otoci_nazivi):
         return "Otok - Sjeverni", pbr
         
-    # 3. Mesta koja prema cjeniku gravitiraju Makarskoj, Imotskom i Pločama idu u Zonu 6[cite: 6]
+    # 3. Mjesta koja prema cjeniku gravitiraju Makarskoj, Imotskom i Pločama idu u Zonu 6[cite: 6]
     if any(g in p_lc for g in ["makarska", "imotski", "ploče", "metković"]):
         return "Zona 6", pbr
 
-    # 4. Određivanje zone strogo prema prve dvije znamenke poštanskog broja (Englmayer cjenik)[cite: 6]:
+    # 4. Određivanje zone strogo prema prve dvije znamenke poštanskog broja[cite: 6]:
     if pbr_prefix == 10:
         return "Zona 1", pbr  # 10xxx - Zagreb i okolica[cite: 6]
     elif 40 <= pbr_prefix <= 49:
@@ -162,19 +162,17 @@ def parsiraj_word_specifikaciju_englmayer(doc_file):
                 if d_match:
                     naplaceni_dizel = float(d_match.group(1).replace(".", "").replace(",", "."))
             
-            elif any(tip in linija.upper() for tip in ["EWP", "FP", "CLL", "EUP"]):
+            # SAVRŠENO ČITANJE MASE: Tražimo isključivo format "Masa: X kg" iz Word dokumenta
+            elif "Masa:" in linija:
                 je_vangabaritna = "EWP1" in linija.upper() or "VANGABARIT" in linija.upper()
-                m_match = re.findall(r"([\d\.,]+)", linija)
-                if m_match:
-                    for val_str in reversed(m_match):
-                        clean_val = val_str.replace(".", "").replace(",", ".")
-                        try:
-                            val_f = float(clean_val)
-                            if 1.0 <= val_f <= 5000.0:
-                                palete_podaci.append((val_f, je_vangabaritna))
-                                break
-                        except:
-                            continue
+                m_masa_match = re.search(r"Masa:\s*([\d\.,]+)\s*kg", linija, re.IGNORECASE)
+                if m_masa_match:
+                    val_str = m_masa_match.group(1).replace(".", "").replace(",", ".")
+                    try:
+                        val_f = float(val_str)
+                        palete_podaci.append((val_f, je_vangabaritna))
+                    except:
+                        pass
 
         if not broj_posiljke or not primatelj:
             continue
