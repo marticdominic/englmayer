@@ -21,7 +21,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
 st.set_page_config(
-    page_title="Kontrola Englmayer Računa (Word & Excel)", page_icon="📦", layout="wide"
+    page_title="Kontrola Englmayer Računa", page_icon="📦", layout="wide"
 )
 
 # Registracija fontova za PDF
@@ -37,9 +37,9 @@ try:
 except Exception as e:
     pass
 
-st.title("📦 Sustav za Kontrolu Englmayer Računa (Word Specifikacije & Cjenik)")
+st.title("📦 Sustav za Kontrolu Englmayer Računa (Word & Excel Specifikacije)")
 st.write(
-    "Automatska kontrola troškova prijevoza i dizel dodatka prema ponudi G. Englmayer (OF 002/2026) s podrškom za Word (.docx) specifikacije."
+    "Automatska kontrola troškova prijevoza, višepaletnih pošiljaka i dizel dodatka prema ponudi G. Englmayer (OF 002/2026)."
 )
 
 # Englmayer cjenik paleta po zonama (EUR bez PDV-a) prema ponudi
@@ -53,17 +53,16 @@ englmayer_cjenik = {
 }
 
 englmayer_otoci = {
-    "južni otoci": {300: 89.00, 400: 100.00, 500: 110.00, 600: 121.00}, # Brač, Hvar, Korčula, Pelješac
-    "sjeverni otoci": {300: 79.00, 400: 89.00, 500: 100.00, 600: 110.00} # Cres, Lošinj, Krk, Rab, Pag
+    "južni otoci": {300: 89.00, 400: 100.00, 500: 110.00, 600: 121.00},
+    "sjeverni otoci": {300: 79.00, 400: 89.00, 500: 100.00, 600: 110.00}
 }
 
-juzni_otoci = ["brač", "hvar", "korčula", "pelješac", "supetar", "bol", "stari grad", "jelsa", "vela luka", "korčula", "ugljan"]
+juzni_otoci = ["brač", "hvar", "korčula", "pelješac", "supetar", "bol", "stari grad", "jelsa", "vela luka", "ugljan"]
 sjeverni_otoci = ["cres", "lošinj", "krk", "rab", "pag", "mali lošinj", "baška", "malinska", "punat", "novalja"]
 
-def odredi_zonu_i_cijenu(primatelj, masa):
+def odredi_zonu_i_jedinicnu_cijenu(primatelj, masa):
     p_lc = str(primatelj).lower()
     
-    # Provjera otoka
     is_otok_juzni = any(o in p_lc for o in juzni_otoci)
     is_otok_sjeverni = any(o in p_lc for o in sjeverni_otoci)
     
@@ -74,7 +73,6 @@ def odredi_zonu_i_cijenu(primatelj, masa):
         tablica = englmayer_otoci["sjeverni otoci"]
         zona_naziv = "Otok - Sjeverni"
     else:
-        # Automatska zona prema regiji u nazivu primatelja (npr. Split, Zadar, Osijek, Čakovec, Zagreb...)
         if any(g in p_lc for g in ["zagreb", "velika gorica", "samobor", "zaprešić"]):
             zona_naziv = "Zona 1"
         elif any(g in p_lc for g in ["split", "zadar", "dubrovnik", "makarska", "ploče", "imotski", "šibenik", "knin"]):
@@ -84,7 +82,7 @@ def odredi_zonu_i_cijenu(primatelj, masa):
         elif any(g in p_lc for g in ["osijek", "vukovar", "vinkovci", "slavonski brod", "županja"]):
             zona_naziv = "Zona 3"
         else:
-            zona_naziv = "Zona 2" # Default
+            zona_naziv = "Zona 2"
             
         tablica = englmayer_cjenik.get(zona_naziv, englmayer_cjenik["Zona 2"])
 
@@ -100,11 +98,10 @@ def odredi_zonu_i_cijenu(primatelj, masa):
 # Formula za dizel: do 1,46 EUR = 0%, na svakih daljnjih 0,07 EUR = 1%
 fn_dizel = lambda c: 0.0 if c <= 1.46 else max(0.0, math.ceil((c - 1.46) / 0.07))
 
-def parsiraj_word_specifikaciju(doc_file):
+def parsiraj_word_specifikaciju_englmayer(doc_file):
     doc = docx.Document(doc_file)
     tekst = "\n".join([p.text for p in doc.paragraphs])
     
-    # Detekcija pošiljaka iz Word formata (prema obliku u vašem primjeru)
     blokovi = tekst.split("Pošiljka ")
     parsed_data = []
     
@@ -117,9 +114,12 @@ def parsiraj_word_specifikaciju(doc_file):
         datum_naloga = ""
         datum_isporuke = ""
         primatelj = ""
-        masa_kg = 0.0
+        ukupna_masa = 0.0
         naplaceni_transport = 0.0
         naplaceni_dizel = 0.0
+        broj_paleta = 1
+        
+        palete_mase = []
         
         for linija in linije:
             if "Broj pošiljke:" in linija:
@@ -133,7 +133,7 @@ def parsiraj_word_specifikaciju(doc_file):
             elif "Ukupna masa pošiljke:" in linija:
                 m_match = re.search(r"([\d\.]+)\s*kg", linija)
                 if m_match:
-                    masa_kg = float(m_match.group(1).replace(".", "").replace(",", "."))
+                    ukupna_masa = float(m_match.group(1).replace(".", "").replace(",", "."))
             elif "Cijena prijevoza:" in linija:
                 c_match = re.search(r"([\d\.,]+)\s*EUR", linija)
                 if c_match:
@@ -142,19 +142,37 @@ def parsiraj_word_specifikaciju(doc_file):
                 d_match = re.search(r"([\d\.,]+)\s*EUR", linija)
                 if d_match:
                     naplaceni_dizel = float(d_match.group(1).replace(".", "").replace(",", "."))
-                    
-        zona, ugovorena_cijena = odredi_zonu_i_cijenu(primatelj, masa_kg)
+            elif "Paleta " in linija and " od " in linija:
+                match_p_tot = re.search(r" od (\d+):", linija)
+                if match_p_tot:
+                    broj_paleta = int(match_p_tot.group(1))
+                match_m = re.search(r"Masa:\s*([\d\.,]+)\s*kg", linija)
+                if match_m:
+                    p_masa = float(match_m.group(1).replace(".", "").replace(",", "."))
+                    palete_mase.append(p_masa)
+
+        if palete_mase:
+            zbroj_masa_paleta = sum(palete_mase)
+            if zbroj_masa_paleta > 0:
+                ukupna_masa = zbroj_masa_paleta
+
+        zona, jedinicna_cijena = odredi_zonu_i_jedinicnu_cijenu(primatelj, ukupna_masa)
         
+        # Ugovorena osnova po paletama (Množi jediničnu cijenu s brojem paleta)
+        ugovorena_osnova = jedinicna_cijena * broj_paleta
+
         parsed_data.append({
             "Broj pošiljke": broj_posiljke,
             "Datum naloga": datum_naloga,
             "Datum isporuke": datum_isporuke,
             "Primatelj": primatelj,
-            "Masa (kg)": masa_kg,
+            "Broj paleta": broj_paleta,
+            "Masa (kg)": ukupna_masa,
             "Zona": zona,
             "Naplaćeni Transport (€)": naplaceni_transport,
-            "Ugovorena Osnova (€)": ugovorena_cijena,
+            "Ugovorena Osnova (€)": ugovorena_osnova,
             "Naplaćeni Dizel (€)": naplaceni_dizel,
+            "Razlika Transport (€)": round(naplaceni_transport - ugovorena_osnova, 2)
         })
         
     return pd.DataFrame(parsed_data)
@@ -180,7 +198,7 @@ if uploaded_file is not None:
     file_name = uploaded_file.name.lower()
     
     if file_name.endswith(".docx"):
-        df = parsiraj_word_specifikaciju(uploaded_file)
+        df = parsiraj_word_specifikaciju_englmayer(uploaded_file)
         st.success(f"Word specifikacija uspješno učitana! Pronađeno pošiljaka: {len(df)}")
     elif file_name.endswith(".xlsx"):
         df = pd.read_excel(uploaded_file)
@@ -191,13 +209,15 @@ if uploaded_file is not None:
 
     if not df.empty:
         if "Ugovorena Osnova (€)" not in df.columns and "Masa (kg)" in df.columns:
-            # Izračun ugovorenih osnova ako već nisu tu
             zone_list = []
             ugovorene_liste = []
             for _, r in df.iterrows():
-                z, uc = odredi_zonu_i_cijenu(r.get("Primatelj", ""), r.get("Masa (kg)", 0))
+                br_p = r.get("Broj paleta", 1)
+                if pd.isna(br_p) or br_p < 1:
+                    br_p = 1
+                z, jed_c = odredi_zonu_i_jedinicnu_cijenu(r.get("Primatelj", ""), r.get("Masa (kg)", 0))
                 zone_list.append(z)
-                ugovorene_liste.append(uc)
+                ugovorene_liste.append(jed_c * br_p)
             df["Zona"] = zone_list
             df["Ugovorena Osnova (€)"] = ugovorene_liste
             df["Ugovoreni Dizel (€)"] = df["Ugovorena Osnova (€)"] * (posto_goriva / 100.0)
@@ -220,6 +240,12 @@ if uploaded_file is not None:
             if "Razlika Transport (€)" in df.columns:
                 sumnjive = df[df["Razlika Transport (€)"] > 0.05]
                 st.dataframe(sumnjive, use_container_width=True)
+                st.download_button(
+                    "📥 Preuzmi izvještaj preplata (Excel)",
+                    to_excel(sumnjive),
+                    "englmayer_preplate.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
             else:
                 st.info("Nema izračunate razlike za prikaz.")
                 
