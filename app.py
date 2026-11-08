@@ -42,7 +42,7 @@ st.write(
     "Automatska kontrola troškova, van gabaritnih paleta (+50%) i dizel dodatka prema ponudi G. Englmayer (OF 002/2026)."
 )
 
-# Englmayer cjenik paleta po zonama (EUR bez PDV-a) iz ponude[cite: 6]
+# Englmayer cjenik paleta po zonama (EUR bez PDV-a) iz ponude
 englmayer_cjenik = {
     "Zona 1": {300: 23.00, 400: 25.00, 500: 30.00, 600: 33.00, 700: 38.00},
     "Zona 2": {300: 26.00, 400: 29.00, 500: 35.00, 600: 39.00, 700: 43.00},
@@ -53,8 +53,8 @@ englmayer_cjenik = {
 }
 
 englmayer_otoci = {
-    "južni otoci": {300: 89.00, 400: 100.00, 500: 110.00, 600: 121.00}, # Brač, Hvar, Korčula, Pelješac[cite: 7]
-    "sjeverni otoci": {300: 79.00, 400: 89.00, 500: 100.00, 600: 110.00} # Cres, Lošinj, Krk, Rab, Pag[cite: 7]
+    "južni otoci": {300: 89.00, 400: 100.00, 500: 110.00, 600: 121.00}, # Brač, Hvar, Korčula, Pelješac
+    "sjeverni otoci": {300: 79.00, 400: 89.00, 500: 100.00, 600: 110.00} # Cres, Lošinj, Krk, Rab, Pag
 }
 
 juzni_otoci_nazivi = ["brač", "hvar", "korčula", "pelješac", "supetar", "bol", "stari grad", "jelsa", "vela luka", "ugljan"]
@@ -86,23 +86,23 @@ def odredi_zonu_englmayer(primatelj):
         return "Otok - Sjeverni"
         
     if any(g in p_lc for g in ["makarska", "imotski", "ploče", "dubrovnik", "metković", "korčula"]):
-        return "Zona 6"[cite: 6]
+        return "Zona 6"
         
     pbr_match = re.search(r'\b(?!19|20|21|22|23|24|25|26|27|28|29)(\d{5})\b', str(primatelj))
     pbr_prefix = int(pbr_match.group(1)[:2]) if pbr_match else 0
 
     if pbr_prefix == 10:
-        return "Zona 1"[cite: 6]
+        return "Zona 1"
     elif 40 <= pbr_prefix <= 49:
-        return "Zona 2"[cite: 6]
+        return "Zona 2"
     elif 34 <= pbr_prefix <= 35:
-        return "Zona 3"[cite: 6]
+        return "Zona 3"
     elif pbr_prefix == 51:
-        return "Zona 4"[cite: 6]
+        return "Zona 4"
     elif (31 <= pbr_prefix <= 33) or (pbr_prefix == 52):
-        return "Zona 5"[cite: 6]
+        return "Zona 5"
     elif pbr_prefix == 20:
-        return "Zona 6"[cite: 6]
+        return "Zona 6"
         
     if any(g in p_lc for g in ["zagreb", "velika gorica", "samobor", "zaprešić"]):
         return "Zona 1"
@@ -113,7 +113,7 @@ def odredi_zonu_englmayer(primatelj):
     else:
         return "Zona 2"
 
-# Formula za dizel: do 1,46 EUR = 0%, na svakih daljnjih 0,07 EUR = 1%[cite: 3]
+# Formula za dizel: do 1,46 EUR = 0%, na svakih daljnjih 0,07 EUR = 1%
 fn_dizel = lambda c: 0.0 if c <= 1.46 else max(0.0, math.ceil((c - 1.46) / 0.07))
 
 def parsiraj_word_specifikaciju_englmayer(doc_file):
@@ -181,12 +181,12 @@ def parsiraj_word_specifikaciju_englmayer(doc_file):
         ukupna_masa = sum([p[0] for p in palete_podaci])
         zona = odredi_zonu_englmayer(primatelj)
 
-        # Izračun ugovorene osnove uz uračunavanje doplate od 50% za van gabaritne palete[cite: 6]
+        # Izračun ugovorene osnove uz uračunavanje doplate od 50% za van gabaritne palete
         ugovorena_osnova = 0.0
         for p_masa, je_vg in palete_podaci:
             osnovna_c = dohvati_cijenu_palete(zona, p_masa)
             if je_vg:
-                osnovna_c *= 1.50  # +50% doplate za van gabaritne palete[cite: 6]
+                osnovna_c *= 1.50  # +50% doplate za van gabaritne palete
             ugovorena_osnova += osnovna_c
 
         parsed_data.append({
