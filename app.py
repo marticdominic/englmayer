@@ -151,6 +151,10 @@ def parsiraj_word_specifikaciju_englmayer(doc_file):
                     p_masa = float(match_m.group(1).replace(".", "").replace(",", "."))
                     palete_mase.append(p_masa)
 
+        # Uklanjanje praznih redova (ako nema broja pošiljke ili primatelja)
+        if not broj_posiljke or not primatelj:
+            continue
+
         if palete_mase:
             zbroj_masa_paleta = sum(palete_mase)
             if zbroj_masa_paleta > 0:
@@ -158,7 +162,7 @@ def parsiraj_word_specifikaciju_englmayer(doc_file):
 
         zona, jedinicna_cijena = odredi_zonu_i_jedinicnu_cijenu(primatelj, ukupna_masa)
         
-        # Ugovorena osnova po paletama (Množi jediničnu cijenu s brojem paleta)
+        # Ugovorena osnova po paletama (množi jediničnu cijenu s brojem paleta)
         ugovorena_osnova = jedinicna_cijena * broj_paleta
 
         parsed_data.append({
@@ -202,9 +206,14 @@ if uploaded_file is not None:
         st.success(f"Word specifikacija uspješno učitana! Pronađeno pošiljaka: {len(df)}")
     elif file_name.endswith(".xlsx"):
         df = pd.read_excel(uploaded_file)
+        # Opcionalno čišćenje praznih redova i za Excel tablice ako postoje
+        if "Broj pošiljke" in df.columns:
+            df = df.dropna(subset=["Broj pošiljke"])
         st.success("Excel tablica uspješno učitana!")
     else:
         df = pd.read_csv(uploaded_file)
+        if "Broj pošiljke" in df.columns:
+            df = df.dropna(subset=["Broj pošiljke"])
         st.success("CSV tablica uspješno učitana!")
 
     if not df.empty:
