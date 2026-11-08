@@ -1,16 +1,17 @@
 import os
 import json
 import io
+import time
 import pandas as pd
 import streamlit as st
 import pypdf
 from google import genai
 from google.genai import types
 
-st.set_page_config(page_title="AI Čitač PDF Računa po Stranicama", layout="wide")
+st.set_page_config(page_title="AI Čitač PDF Računa - Stabilna verzija", layout="wide")
 
-st.title("📦 AI Čitač Transportnih Računa (Metoda po Stranicama)")
-st.write("Ova verzija dijeli PDF na manje dijelove (po stranicama) kako ne bi preopteretila AI i kako bi izvući sve palete bez greške.")
+st.title("📦 AI Čitač Transportnih Računa (Stabilizirano)")
+st.write("Ova verzija grupira stranice u veće blokove i automatski pričekat će ako su serveri opterećeni.")
 
 api_key = st.text_input("Unesite svoj Google Gemini API ključ:", type="password")
 uploaded_file = st.file_uploader("Odaberite PDF račun", type=["pdf"])
@@ -18,20 +19,19 @@ uploaded_file = st.file_uploader("Odaberite PDF račun", type=["pdf"])
 if uploaded_file is not None and api_key:
     pdf_bytes = uploaded_file.read()
     
-    # Čitamo ukupan broj stranica koristeći pypdf
     pdf_reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
     total_pages = len(pdf_reader.pages)
     
     st.info(f"PDF je učitan. Dokument ima ukupno {total_pages} stranica.")
     
-    pages_per_chunk = st.slider("Koliko stranica obraditi u jednom koraku?", min_value=1, max_value=5, value=2, step=1)
+    # Preporučujemo veći broj stranica odjednom da se smanji broj poziva serveru
+    pages_per_chunk = st.slider("Koliko stranica obraditi u jednom koraku?", min_value=5, max_value=15, value=10, step=5)
     
-    if st.button("🚀 Pokreni stabilnu obradu po stranicama"):
+    if st.button("🚀 Pokreni stabilnu obradu"):
         try:
             client = genai.Client(api_key=api_key)
             all_data = []
             
-            # Računamo raspone stranica (npr. 1-2, 3-4, 5-6...)
             chunks = []
             for i in range(0, total_pages, pages_per_chunk):
                 chunks.append((i, min(i + pages_per_chunk, total_pages)))
@@ -42,7 +42,6 @@ if uploaded_file is not None and api_key:
             for idx, (start_page, end_page) in enumerate(chunks):
                 status_text.text(f"Obrađujem stranice {start_page + 1} do {end_page} od ukupno {total_pages}...")
                 
-                # Izvađamo samo određene stranice u novi privremeni PDF
                 writer = pypdf.PdfWriter()
                 for p in range(start_page, end_page):
                     writer.add_page(pdf_reader.pages[p])
@@ -51,17 +50,15 @@ if uploaded_file is not None and api_key:
                 writer.write(chunk_pdf_bytes)
                 chunk_pdf_bytes.seek(0)
                 
-                # Spremano privremeno za upload na Gemini
                 temp_chunk_path = f"temp_chunk_{idx}.pdf"
                 with open(temp_chunk_path, "wb") as f:
                     f.write(chunk_pdf_bytes.read())
                 
-                # Upload samo te 2-3 stranice na Gemini API
                 uploaded_chunk = client.files.upload(file=temp_chunk_path)
                 
                 chunk_prompt = """
                 Ti si sustav za ekstrakciju logističkih i transportnih podataka iz računa.
-                Iz ovog dijela PDF-a (ovih nekoliko stranica) izvuci sve pošiljke i sve pojedinačne palete.
+                Iz ovog dijela PDF-a izvuci sve pošiljke i sve pojedinačne palete.
                 
                 Vrati isključivo čisti VALJANI JSON format kao listu objekata:
                 [
@@ -82,35 +79,42 @@ if uploaded_file is not None and api_key:
                     "ukupna_cijena_eur": 123.45
                   }
                 ]
-                
-                Ako na ovim stranicama nema pošiljki ili su samo opći podaci o računu, vrati praznu listu [].
+                Ako na ovim stranicama nema pošiljki, vrati praznu listu [].
                 """
                 
-                try:
-                    response = client.models.generate_content(
-                        model='gemini-3.8-flash',
-                        contents=[uploaded_chunk, chunk_prompt],
-                        config=types.GenerateContentConfig(
-                            temperature=0.0,
-                            response_mime_type="application/json"
+                # Mehanizam ponovnog pokušaja (Retry) ako server vrati 503 grešku
+                max_retries = 3
+                success = False
+                for attempt in range(max_retries):
+                    try:
+                        response = client.models.generate_content(
+                            model='gemini-3.8-flash',
+                            contents=[uploaded_chunk, chunk_prompt],
+                            config=types.GenerateContentConfig(
+                                temperature=0.0,
+                                response_mime_type="application/json"
+                            )
                         )
-                    )
-                    
-                    page_data = json.loads(response.text)
-                    if isinstance(page_data, list):
-                        all_data.extend(page_data)
-                except Exception as e:
-                    st.warning(f"Upozorenje za stranice {start_page + 1}-{end_page}: {e}")
+                        page_data = json.loads(response.text)
+                        if isinstance(page_data, list):
+                            all_data.extend(page_data)
+                        success = True
+                        break
+                    except Exception as err:
+                        if attempt < max_retries - 1:
+                            time.sleep(3 * (attempt + 1)) # Čeka par sekundi pa proba opet
+                        else:
+                            st.warning(f"Preskačem stranice {start_page+1}-{end_page} zbog greške servera: {err}")
                 
-                # Brišemo privremenu datoteku
                 if os.path.exists(temp_chunk_path):
                     os.remove(temp_chunk_path)
                 
+                # Mala pauza između zahtjeva da ne opteretimo server
+                time.sleep(1)
                 progress_bar.progress((idx + 1) / len(chunks))
             
-            status_text.text("Završena obrada svih stranica! Pripremam jedinstvenu Excel tablicu...")
+            status_text.text("Obrada završena! Pripremam Excel tablicu...")
             
-            # Pretvaranje svih prikupljenih podataka u jednu Excel tablicu
             flat_rows = []
             for item in all_data:
                 posiljka = item.get("broj_posiljke", "")
@@ -123,30 +127,17 @@ if uploaded_file is not None and api_key:
                 palete = item.get("palete", [])
                 if not palete:
                     flat_rows.append({
-                        "Broj pošiljke": posiljka,
-                        "LA-ID": la_id,
-                        "Datum naloga": d_naloga,
-                        "Datum isporuke": d_isporuke,
-                        "Primatelj": primatelj,
-                        "Oznaka palete": "",
-                        "Vrsta pakiranja": "",
-                        "Masa (kg)": 0,
-                        "CBM": 0,
-                        "Ukupna cijena (EUR)": ukupna_cijena
+                        "Broj pošiljke": posiljka, "LA-ID": la_id, "Datum naloga": d_naloga, 
+                        "Datum isporuke": d_isporuke, "Primatelj": primatelj, "Oznaka palete": "", 
+                        "Vrsta pakiranja": "", "Masa (kg)": 0, "CBM": 0, "Ukupna cijena (EUR)": ukupna_cijena
                     })
                 else:
                     for p in palete:
                         flat_rows.append({
-                            "Broj pošiljke": posiljka,
-                            "LA-ID": la_id,
-                            "Datum naloga": d_naloga,
-                            "Datum isporuke": d_isporuke,
-                            "Primatelj": primatelj,
-                            "Oznaka palete": p.get("oznaka", ""),
-                            "Vrsta pakiranja": p.get("vrsta_pakiranja", ""),
-                            "Masa (kg)": p.get("masa_kg", 0),
-                            "CBM": p.get("cbm", 0),
-                            "Ukupna cijena (EUR)": ukupna_cijena
+                            "Broj pošiljke": posiljka, "LA-ID": la_id, "Datum naloga": d_naloga, 
+                            "Datum isporuke": d_isporuke, "Primatelj": primatelj, "Oznaka palete": p.get("oznaka", ""), 
+                            "Vrsta pakiranja": p.get("vrsta_pakiranja", ""), "Masa (kg)": p.get("masa_kg", 0), 
+                            "CBM": p.get("cbm", 0), "Ukupna cijena (EUR)": ukupna_cijena
                         })
             
             df = pd.DataFrame(flat_rows)
