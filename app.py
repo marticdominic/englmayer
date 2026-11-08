@@ -39,7 +39,7 @@ except Exception as e:
 
 st.title("📦 Sustav za Kontrolu Englmayer Računa (Word & Excel Specifikacije)")
 st.write(
-    "Automatska kontrola troškova prijevoza, višepaletnih pošiljaka i dizel dodatka prema ponudi G. Englmayer (OF 002/2026)."
+    "Automatska kontrola troškova po paletama i dizel dodatka prema ponudi G. Englmayer (OF 002/2026)."
 )
 
 # Englmayer cjenik paleta po zonama (EUR bez PDV-a) prema ponudi
@@ -60,42 +60,46 @@ englmayer_otoci = {
 juzni_otoci = ["brač", "hvar", "korčula", "pelješac", "supetar", "bol", "stari grad", "jelsa", "vela luka", "ugljan"]
 sjeverni_otoci = ["cres", "lošinj", "krk", "rab", "pag", "mali lošinj", "baška", "malinska", "punat", "novalja"]
 
-def odredi_zonu_i_jedinicnu_cijenu(primatelj, masa):
+def dohvati_cijenu_palete(zona, masa_palete):
+    if "Otok - Južni" in zona:
+        tablica = englmayer_otoci["južni otoci"]
+        granice = [300, 400, 500, 600]
+    elif "Otok - Sjeverni" in zona:
+        tablica = englmayer_otoci["sjeverni otoci"]
+        granice = [300, 400, 500, 600]
+    else:
+        tablica = englmayer_cjenik.get(zona, englmayer_cjenik["Zona 2"])
+        granice = [300, 400, 500, 600, 700]
+
+    for g in granice:
+        if masa_palete <= g:
+            return tablica[g]
+            
+    return tablica[granice[-1]]
+
+def odredi_zonu(primatelj):
     p_lc = str(primatelj).lower()
     
     is_otok_juzni = any(o in p_lc for o in juzni_otoci)
     is_otok_sjeverni = any(o in p_lc for o in sjeverni_otoci)
     
     if is_otok_juzni:
-        tablica = englmayer_otoci["južni otoci"]
-        zona_naziv = "Otok - Južni"
+        return "Otok - Južni"
     elif is_otok_sjeverni:
-        tablica = englmayer_otoci["sjeverni otoci"]
-        zona_naziv = "Otok - Sjeverni"
+        return "Otok - Sjeverni"
     else:
         if any(g in p_lc for g in ["zagreb", "velika gorica", "samobor", "zaprešić"]):
-            zona_naziv = "Zona 1"
+            return "Zona 1"
         elif any(g in p_lc for g in ["split", "zadar", "dubrovnik", "makarska", "ploče", "imotski", "šibenik", "knin"]):
-            zona_naziv = "Zona 6" if any(x in p_lc for x in ["makarska", "ploče", "imotski"]) else "Zona 2"
+            return "Zona 6" if any(x in p_lc for x in ["makarska", "ploče", "imotski"]) else "Zona 2"
         elif any(g in p_lc for g in ["rijeka", "pula", "opatija", "poreč", "rovinj", "kukuljanovo"]):
-            zona_naziv = "Zona 2"
+            return "Zona 2"
         elif any(g in p_lc for g in ["osijek", "vukovar", "vinkovci", "slavonski brod", "županja"]):
-            zona_naziv = "Zona 3"
+            return "Zona 3"
         else:
-            zona_naziv = "Zona 2"
-            
-        tablica = englmayer_cjenik.get(zona_naziv, englmayer_cjenik["Zona 2"])
+            return "Zona 2"
 
-    granice = [300, 400, 500, 600, 700] if "Otok" not in zona_naziv else [300, 400, 500, 600]
-    
-    for g in granice:
-        if masa <= g:
-            return zona_naziv, tablica[g]
-            
-    max_g = granice[-1]
-    return zona_naziv, tablica[max_g]
-
-# Formula za dizel: do 1,46 EUR = 0%, na svakih daljnjih 0,07 EUR = 1%
+# Formula za dizel: do 1,46 EUR = 0%, na svakih daljnjih 0,07 EUR = 1%[cite: 3]
 fn_dizel = lambda c: 0.0 if c <= 1.46 else max(0.0, math.ceil((c - 1.46) / 0.07))
 
 def parsiraj_word_specifikaciju_englmayer(doc_file):
@@ -117,7 +121,7 @@ def parsiraj_word_specifikaciju_englmayer(doc_file):
         ukupna_masa = 0.0
         naplaceni_transport = 0.0
         naplaceni_dizel = 0.0
-        broj_paleta = 1
+        broj_paleta = 0
         
         palete_mase = []
         
@@ -143,9 +147,7 @@ def parsiraj_word_specifikaciju_englmayer(doc_file):
                 if d_match:
                     naplaceni_dizel = float(d_match.group(1).replace(".", "").replace(",", "."))
             elif "Paleta " in linija and " od " in linija:
-                match_p_tot = re.search(r" od (\d+):", linija)
-                if match_p_tot:
-                    broj_paleta = int(match_p_tot.group(1))
+                broj_paleta += 1
                 match_m = re.search(r"Masa:\s*([\d\.,]+)\s*kg", linija)
                 if match_m:
                     p_masa = float(match_m.group(1).replace(".", "").replace(",", "."))
@@ -155,15 +157,25 @@ def parsiraj_word_specifikaciju_englmayer(doc_file):
         if not broj_posiljke or not primatelj:
             continue
 
+        if broj_paleta == 0:
+            broj_paleta = 1
+
         if palete_mase:
             zbroj_masa_paleta = sum(palete_mase)
             if zbroj_masa_paleta > 0:
                 ukupna_masa = zbroj_masa_paleta
 
-        zona, jedinicna_cijena = odredi_zonu_i_jedinicnu_cijenu(primatelj, ukupna_masa)
-        
-        # Ugovorena osnova po paletama (množi jediničnu cijenu s brojem paleta)
-        ugovorena_osnova = jedinicna_cijena * broj_paleta
+        # Određivanje zone
+        zona = odredi_zonu(primatelj)
+
+        # Izračun ugovorene osnove po cjeniku (zbrajanje cijena pojedinačnih paleta)
+        ugovorena_osnova = 0.0
+        if palete_mase:
+            for p_masa in palete_mase:
+                ugovorena_osnova += dohvati_cijenu_palete(zona, p_masa)
+        else:
+            prosjek_mase = ukupna_masa / broj_paleta if broj_paleta > 0 else ukupna_masa
+            ugovorena_osnova = dohvati_cijenu_palete(zona, prosjek_mase) * broj_paleta
 
         parsed_data.append({
             "Broj pošiljke": broj_posiljke,
@@ -174,7 +186,7 @@ def parsiraj_word_specifikaciju_englmayer(doc_file):
             "Masa (kg)": ukupna_masa,
             "Zona": zona,
             "Naplaćeni Transport (€)": naplaceni_transport,
-            "Ugovorena Osnova (€)": ugovorena_osnova,
+            "Ugovorena Osnova (€)": round(ugovorena_osnova, 2),
             "Naplaćeni Dizel (€)": naplaceni_dizel,
             "Razlika Transport (€)": round(naplaceni_transport - ugovorena_osnova, 2)
         })
@@ -206,7 +218,6 @@ if uploaded_file is not None:
         st.success(f"Word specifikacija uspješno učitana! Pronađeno pošiljaka: {len(df)}")
     elif file_name.endswith(".xlsx"):
         df = pd.read_excel(uploaded_file)
-        # Opcionalno čišćenje praznih redova i za Excel tablice ako postoje
         if "Broj pošiljke" in df.columns:
             df = df.dropna(subset=["Broj pošiljke"])
         st.success("Excel tablica uspješno učitana!")
@@ -221,12 +232,13 @@ if uploaded_file is not None:
             zone_list = []
             ugovorene_liste = []
             for _, r in df.iterrows():
-                br_p = r.get("Broj paleta", 1)
-                if pd.isna(br_p) or br_p < 1:
-                    br_p = 1
-                z, jed_c = odredi_zonu_i_jedinicnu_cijenu(r.get("Primatelj", ""), r.get("Masa (kg)", 0))
+                z = odredi_zonu(r.get("Primatelj", ""))
                 zone_list.append(z)
-                ugovorene_liste.append(jed_c * br_p)
+                masa = float(r.get("Masa (kg)", 0))
+                br_p = int(r.get("Broj paleta", 1))
+                if br_p < 1: br_p = 1
+                ug_c = dohvati_cijenu_palete(z, masa / br_p) * br_p
+                ugovorene_liste.append(round(ug_c, 2))
             df["Zona"] = zone_list
             df["Ugovorena Osnova (€)"] = ugovorene_liste
             df["Ugovoreni Dizel (€)"] = df["Ugovorena Osnova (€)"] * (posto_goriva / 100.0)
