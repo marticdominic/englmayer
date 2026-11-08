@@ -57,6 +57,7 @@ englmayer_otoci = {
     "sjeverni otoci": {300: 79.00, 400: 89.00, 500: 100.00, 600: 110.00} # Cres, Lošinj, Krk, Rab, Pag[cite: 7]
 }
 
+# Strogo definirani nazivi otoka da se spriječe kriva prepoznavanja
 juzni_otoci_nazivi = ["brač", "hvar", "korčula", "pelješac", "supetar", "bol", "stari grad", "jelsa", "vela luka", "ugljan"]
 sjeverni_otoci_nazivi = ["cres", "lošinj", "krk", "rab", "pag", "mali lošinj", "baška", "malinska", "punat", "novalja"]
 
@@ -86,37 +87,45 @@ def odredi_zonu_i_pbr(primatelj):
     pbr = int(pbr_match.group(1)) if pbr_match else 0
     pbr_prefix = int(str(pbr)[:2]) if pbr > 0 else 0
 
-    # 2. Provjera otoka po nazivu
-    if any(o in p_lc for o in juzni_otoci_nazivi):
-        return "Otok - Južni", pbr
-    if any(o in p_lc for o in sjeverni_otoci_nazivi):
-        return "Otok - Sjeverni", pbr
+    # 2. Provjera otoka isključivo po jasnim otočnim mjestima u adresi/nazivu
+    for o in juzni_otoci_nazivi:
+        if f" {o}" in f" {p_lc}" or f",{o}" in f",{p_lc}":
+            return "Otok - Južni", pbr
+    for o in sjeverni_otoci_nazivi:
+        if f" {o}" in f" {p_lc}" or f",{o}" in f",{p_lc}":
+            return "Otok - Sjeverni", pbr
         
     # 3. Mjesta koja prema cjeniku gravitiraju Makarskoj, Imotskom i Pločama idu u Zonu 6[cite: 6]
     if any(g in p_lc for g in ["makarska", "imotski", "ploče", "metković"]):
         return "Zona 6", pbr
 
-    # 4. Određivanje zone strogo prema prve dvije znamenke poštanskog broja[cite: 6]:
+    # 4. Strogo određivanje zone prema rasponu poštanskog broja (Englmayer cjenik)[cite: 6]:
     if pbr_prefix == 10:
         return "Zona 1", pbr  # 10xxx - Zagreb i okolica[cite: 6]
     elif 40 <= pbr_prefix <= 49:
-        return "Zona 2", pbr  # 40xxx - 49xxx[cite: 6]
+        return "Zona 2", pbr  # 40xxx - 49xxx (Međimurje, Varaždin, Koprivnica, Bjelovar...)[cite: 6]
     elif 34 <= pbr_prefix <= 35:
-        return "Zona 3", pbr  # 34xxx - 35xxx[cite: 6]
+        return "Zona 3", pbr  # 34xxx - 35xxx (Slavonska Požega, Slavonski Brod...)[cite: 6]
     elif pbr_prefix == 51:
         return "Zona 4", pbr  # 51xxx - Rijeka i primorje[cite: 6]
     elif (31 <= pbr_prefix <= 33) or (pbr_prefix == 52):
-        return "Zona 5", pbr  # 31-33xxx, 52xxx[cite: 6]
+        return "Zona 5", pbr  # 31-33xxx (Osijek, Vinkovci, Vukovar...), 52xxx (Istra)[cite: 6]
     elif pbr_prefix == 20:
-        return "Zona 6", pbr  # 20xxx[cite: 6]
+        return "Zona 6", pbr  # 20xxx - Dubrovnik[cite: 6]
+    elif 42 <= pbr_prefix <= 43:
+        return "Zona 2", pbr
+    elif 47 <= pbr_prefix <= 48:
+        return "Zona 2", pbr # npr. Karlovac 47000 je Zona 2
         
     # Fallback po nazivima gradova ako ZIP nije pronađen
     if any(g in p_lc for g in ["zagreb", "velika gorica", "samobor", "zaprešić"]):
         return "Zona 1", pbr
-    elif any(g in p_lc for g in ["osijek", "vukovar", "vinkovci", "slavonski brod", "županja", "požega"]):
-        return "Zona 3", pbr
+    elif any(g in p_lc for g in ["osijek", "vukovar", "vinkovci", "slavonski brod", "županja", "požega", "đakovo"]):
+        return "Zona 5", pbr
     elif any(g in p_lc for g in ["rijeka", "pula", "opatija", "poreč", "rovinj", "kukuljanovo"]):
         return "Zona 4", pbr
+    elif any(g in p_lc for g in ["karlovac", "zadar", "split", "šibenik", "knin"]):
+        return "Zona 2", pbr
     else:
         return "Zona 2", pbr
 
@@ -162,7 +171,6 @@ def parsiraj_word_specifikaciju_englmayer(doc_file):
                 if d_match:
                     naplaceni_dizel = float(d_match.group(1).replace(".", "").replace(",", "."))
             
-            # SAVRŠENO ČITANJE MASE: Tražimo isključivo format "Masa: X kg" iz Word dokumenta
             elif "Masa:" in linija:
                 je_vangabaritna = "EWP1" in linija.upper() or "VANGABARIT" in linija.upper()
                 m_masa_match = re.search(r"Masa:\s*([\d\.,]+)\s*kg", linija, re.IGNORECASE)
@@ -184,7 +192,7 @@ def parsiraj_word_specifikaciju_englmayer(doc_file):
 
         ukupna_masa = sum([p[0] for p in palete_podaci])
         
-        # Određivanje zone i izdvojenog poštanskog broja
+        # Određivanje zone i izdvojenog poštanskog broja prema cjeniku
         zona, pbr = odredi_zonu_i_pbr(primatelj)
 
         ugovorena_osnova = 0.0
@@ -281,7 +289,7 @@ if uploaded_file is not None:
             st.subheader("Pošiljke s razlikom u cijeni (Naplaćeno > Ugovoreno)")
             if "Razlika Transport (€)" in df.columns:
                 sumnjive = df[df["Razlika Transport (€)"] > 0.05]
-                st.dataframe(sumnjive, use_container_width=True)
+                st.dataframe(sumnjive, use_container_width+True)
                 st.download_button(
                     "📥 Preuzmi izvještaj preplate (Excel)",
                     to_excel(sumnjive),
